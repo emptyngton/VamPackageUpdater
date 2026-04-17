@@ -1,0 +1,41 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+          dotnet-quality: 'preview'
+
+      - name: Publish single-file win-x64
+        shell: pwsh
+        run: |
+          dotnet publish VamPackageUpdater/VamPackageUpdater.csproj `
+            -c Release -r win-x64 -o publish
+          if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed." }
+
+      - name: Show output
+        shell: pwsh
+        run: Get-ChildItem publish | Format-Table Name,Length
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: publish/VamPackageUpdater.exe
+          generate_release_notes: true
+          draft: false
+          prerelease: false
