@@ -6,6 +6,9 @@ namespace VamPackageUpdater.Services;
 
 public sealed class PackageUpdater
 {
+    private static readonly HashSet<string> ScannableExtensions =
+        new(StringComparer.OrdinalIgnoreCase) { ".json", ".vap", ".vam", ".vaj", ".vab" };
+
     private readonly Action<string> _log;
 
     public PackageUpdater(Action<string> log) => _log = log;
@@ -20,20 +23,29 @@ public sealed class PackageUpdater
         if (!File.Exists(opts.SourceVarPath))
             return UpdateResult.Fail($"Source .var not found: {opts.SourceVarPath}");
 
-        if (string.IsNullOrWhiteSpace(opts.PluginName) || string.IsNullOrWhiteSpace(opts.NewVersion))
-            return UpdateResult.Fail("Plugin name and new version are required.");
+        if (opts.PluginUpdates.Count == 0 && opts.NewLicenseLine is null)
+            return UpdateResult.Fail("Nothing to do — no plugin updates and no license change.");
 
-        var pattern = new Regex(
-            $@"{Regex.Escape(opts.PluginName)}\.(?:\d+|latest)\b",
-            RegexOptions.IgnoreCase);
-        var replacement = $"{opts.PluginName}.{opts.NewVersion}";
+        var patterns = opts.PluginUpdates
+            .Where(u => !string.IsNullOrWhiteSpace(u.NewVersion))
+            .Select(u => new PluginPattern(
+                u,
+                new Regex($@"{Regex.Escape(u.PluginId)}\.(?:\d+|latest)\b", RegexOptions.IgnoreCase),
+                $"{u.PluginId}.{u.NewVersion.Trim()}"))
+            .ToList();
 
         _log($"Starting update for: {Path.GetFileName(opts.SourceVarPath)}");
-        _log($"Searching for: '{opts.PluginName}.(number or latest)'");
-        _log($"Replacing with: '{replacement}'");
+        if (patterns.Count == 0)
+            _log("No plugin updates queued.");
+        else
+        {
+            _log($"Plugin updates queued: {patterns.Count}");
+            foreach (var p in patterns)
+                _log($"  - {p.Update.PluginId}  ->  {p.Update.NewVersion}");
+        }
         _log(opts.NewLicenseLine is null
             ? "License will not be changed."
-            : $"License will be changed.");
+            : "License will be changed.");
         _log(new string('-', 50));
 
         var tempDir = Path.Combine(Path.GetTempPath(), "VamPackageUpdater_" + Guid.NewGuid().ToString("N"));
@@ -54,54 +66,62 @@ public sealed class PackageUpdater
             ct.ThrowIfCancellationRequested();
 
             var totalReplacements = 0;
+            var perPluginCounts = new Dictionary<string, int>();
             var licenseUpdated = false;
 
             var metaJson = Path.Combine(tempDir, "meta.json");
-            if (File.Exists(metaJson))
+            if (opts.NewLicenseLine is not null && File.Exists(metaJson))
             {
-                _log("  - Processing 'meta.json'...");
                 var lines = File.ReadAllLines(metaJson).ToList();
-
-                if (opts.NewLicenseLine is not null)
+                for (var i = 0; i < lines.Count; i++)
                 {
-                    for (var i = 0; i < lines.Count; i++)
+                    if (lines[i].Contains("\"licenseType\""))
                     {
-                        if (lines[i].Contains("\"licenseType\""))
-                        {
-                            var indent = lines[i][..(lines[i].Length - lines[i].TrimStart().Length)];
-                            lines[i] = indent + opts.NewLicenseLine;
-                            licenseUpdated = true;
-                            _log("    - License updated in 'meta.json'.");
-                            break;
-                        }
+                        var indent = lines[i][..(lines[i].Length - lines[i].TrimStart().Length)];
+                        lines[i] = indent + opts.NewLicenseLine;
+                        licenseUpdated = true;
+                        _log("License updated in 'meta.json'.");
+                        File.WriteAllText(metaJson, string.Join("\n", lines));
+                        break;
                     }
                 }
-
-                var content = string.Join("\n", lines);
-                var (replaced, count) = ReplaceAll(pattern, content, replacement);
-                if (count > 0)
-                {
-                    totalReplacements += count;
-                    _log($"    - Found {count} plugin reference(s) in 'meta.json'.");
-                }
-                File.WriteAllText(metaJson, replaced);
             }
 
-            var scenesRoot = Path.Combine(tempDir, "Saves", "scene");
-            if (Directory.Exists(scenesRoot))
+            if (patterns.Count > 0)
             {
-                foreach (var file in Directory.EnumerateFiles(scenesRoot, "*.json", SearchOption.AllDirectories))
+                foreach (var file in EnumerateScannableFiles(tempDir))
                 {
                     ct.ThrowIfCancellationRequested();
                     var text = File.ReadAllText(file);
-                    var (replaced, count) = ReplaceAll(pattern, text, replacement);
-                    if (count > 0)
+                    var changed = false;
+
+                    foreach (var p in patterns)
                     {
-                        totalReplacements += count;
-                        var rel = Path.GetRelativePath(tempDir, file);
-                        _log($"  - Found {count} reference(s) in '{rel}'.");
-                        File.WriteAllText(file, replaced);
+                        var (replaced, count) = ReplaceAll(p.Regex, text, p.Replacement);
+                        if (count > 0)
+                        {
+                            text = replaced;
+                            changed = true;
+                            totalReplacements += count;
+                            perPluginCounts[p.Update.PluginId] =
+                                perPluginCounts.GetValueOrDefault(p.Update.PluginId) + count;
+                        }
                     }
+
+                    if (changed)
+                    {
+                        File.WriteAllText(file, text);
+                        var rel = Path.GetRelativePath(tempDir, file);
+                        _log($"  - Updated: {rel}");
+                    }
+                }
+
+                if (perPluginCounts.Count > 0)
+                {
+                    _log("");
+                    _log("Per-plugin replacement counts:");
+                    foreach (var kv in perPluginCounts.OrderBy(k => k.Key, StringComparer.Ordinal))
+                        _log($"  - {kv.Key}: {kv.Value}");
                 }
             }
 
@@ -132,10 +152,34 @@ public sealed class PackageUpdater
             Directory.CreateDirectory(outDir);
             var outPath = Path.Combine(outDir, newFilename);
 
+            if (opts.DryRun)
+            {
+                _log("");
+                _log(new string('-', 50));
+                _log("DRY RUN: no file was written. Would have created:");
+                _log($"   {outPath}");
+                return UpdateResult.Ok(null, totalReplacements, licenseUpdated);
+            }
+
             if (File.Exists(outPath))
             {
-                _log($"  - Warning: '{newFilename}' already exists and will be overwritten.");
-                File.Delete(outPath);
+                var choice = opts.OnCollision?.Invoke(outPath) ?? CollisionChoice.Overwrite;
+                switch (choice)
+                {
+                    case CollisionChoice.Cancel:
+                        _log("");
+                        _log("Cancelled. No file was written.");
+                        return UpdateResult.Ok(null, totalReplacements, licenseUpdated);
+                    case CollisionChoice.NextFree:
+                        outPath = FindNextFreePath(outDir, stem);
+                        newFilename = Path.GetFileName(outPath);
+                        _log($"Using next free filename: {newFilename}");
+                        break;
+                    case CollisionChoice.Overwrite:
+                        _log($"Overwriting existing '{newFilename}'.");
+                        File.Delete(outPath);
+                        break;
+                }
             }
 
             _log("");
@@ -143,7 +187,7 @@ public sealed class PackageUpdater
             ZipFromDirectory(tempDir, outPath);
 
             _log(new string('-', 50));
-            _log($"Success! Package created at:");
+            _log("Success! Package created at:");
             _log($"   {outPath}");
 
             return UpdateResult.Ok(outPath, totalReplacements, licenseUpdated);
@@ -151,6 +195,31 @@ public sealed class PackageUpdater
         finally
         {
             try { Directory.Delete(tempDir, recursive: true); } catch { }
+        }
+    }
+
+    public static string FindNextFreePath(string outDir, string sourceStem)
+    {
+        var parts = sourceStem.Split('.');
+        if (parts.Length > 1 && int.TryParse(parts[^1], out var n))
+        {
+            for (var candidate = n + 1; candidate < n + 10000; candidate++)
+            {
+                parts[^1] = candidate.ToString();
+                var candidateName = string.Join('.', parts) + ".var";
+                var candidatePath = Path.Combine(outDir, candidateName);
+                if (!File.Exists(candidatePath)) return candidatePath;
+            }
+        }
+        return Path.Combine(outDir, sourceStem + ".updated." + Guid.NewGuid().ToString("N")[..8] + ".var");
+    }
+
+    private static IEnumerable<string> EnumerateScannableFiles(string root)
+    {
+        foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+        {
+            if (ScannableExtensions.Contains(Path.GetExtension(file)))
+                yield return file;
         }
     }
 
@@ -171,6 +240,8 @@ public sealed class PackageUpdater
             archive.CreateEntryFromFile(file, rel, CompressionLevel.Optimal);
         }
     }
+
+    private sealed record PluginPattern(Models.PluginUpdate Update, Regex Regex, string Replacement);
 }
 
 public sealed record UpdateResult(bool Success, string? OutputPath, int Replacements, bool LicenseUpdated, string? Error)

@@ -1,11 +1,21 @@
+using VamPackageUpdater.Models;
+
 namespace VamPackageUpdater.Services;
 
 public sealed class UpdaterOptions
 {
     public string SourceVarPath { get; set; } = "";
-    public string PluginName { get; set; } = "";
-    public string NewVersion { get; set; } = "";
+    public List<PluginUpdate> PluginUpdates { get; set; } = new();
     public string? NewLicenseLine { get; set; }
+    public bool DryRun { get; set; }
+    public Func<string, CollisionChoice>? OnCollision { get; set; }
+}
+
+public enum CollisionChoice
+{
+    Overwrite,
+    NextFree,
+    Cancel
 }
 
 public static class Licenses
