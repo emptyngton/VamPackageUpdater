@@ -267,6 +267,40 @@
             </Style.Triggers>
         </Style>
 
+        <!-- Filter tab style (looks like a pill-button; active = highlighted) -->
+        <Style x:Key="FilterTabStyle" TargetType="ToggleButton">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="#a0a0a0"/>
+            <Setter Property="BorderBrush" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0,0,0,2"/>
+            <Setter Property="Padding" Value="12,5"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="Bd"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#2a2a2a"/>
+                                <Setter Property="Foreground" Value="#e0e0e0"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="#5a7aaa"/>
+                                <Setter Property="Foreground" Value="#e0e0e0"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- CheckBox dark style -->
         <Style TargetType="CheckBox">
             <Setter Property="Foreground" Value="#e0e0e0"/>
@@ -334,6 +368,8 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="3*" MinHeight="120"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="2*" MinHeight="160"/>
@@ -349,7 +385,40 @@
             <Button Grid.Column="1" Content="Browse..." Click="BrowseButton_Click" MinWidth="90"/>
         </Grid>
 
-        <Grid Grid.Row="2" Margin="0,0,0,4">
+        <Border Grid.Row="2" x:Name="MetaPanel" Visibility="Collapsed"
+                Background="#171717" BorderBrush="#2a2a2a" BorderThickness="1"
+                Padding="12,10" Margin="0,0,0,10">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="90"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="70"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <TextBlock Grid.Row="0" Grid.Column="0" Text="Creator:" Foreground="#808080"/>
+                <TextBlock Grid.Row="0" Grid.Column="1" x:Name="MetaCreator" Foreground="#4EC9B0" FontFamily="Cascadia Mono, Consolas"/>
+                <TextBlock Grid.Row="0" Grid.Column="2" Text="Size:" Foreground="#808080" Margin="10,0,0,0"/>
+                <TextBlock Grid.Row="0" Grid.Column="3" x:Name="MetaSize" Foreground="#CE9178" FontFamily="Cascadia Mono, Consolas"/>
+
+                <TextBlock Grid.Row="1" Grid.Column="0" Text="License:" Foreground="#808080" Margin="0,4,0,0"/>
+                <TextBlock Grid.Row="1" Grid.Column="1" x:Name="MetaLicense" Foreground="#DCDCAA" FontFamily="Cascadia Mono, Consolas" Margin="0,4,0,0"/>
+                <TextBlock Grid.Row="1" Grid.Column="2" Text="Files:" Foreground="#808080" Margin="10,4,0,0"/>
+                <TextBlock Grid.Row="1" Grid.Column="3" x:Name="MetaFileCount" Foreground="#CE9178" FontFamily="Cascadia Mono, Consolas" Margin="0,4,0,0"/>
+
+                <TextBlock Grid.Row="2" Grid.Column="0" Text="Description:" Foreground="#808080" Margin="0,4,0,0" VerticalAlignment="Top"/>
+                <TextBlock Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="3" x:Name="MetaDescription"
+                           Foreground="#c0c0c0" TextWrapping="Wrap" Margin="0,4,0,0"
+                           MaxHeight="60" TextTrimming="CharacterEllipsis"/>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="3" Margin="0,0,0,4">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
@@ -365,7 +434,31 @@
             </StackPanel>
         </Grid>
 
-        <DataGrid Grid.Row="3" x:Name="PluginsGrid" Margin="0,0,0,6">
+        <Border Grid.Row="4" BorderBrush="#2a2a2a" BorderThickness="0,0,0,1" Margin="0,2,0,6">
+            <StackPanel Orientation="Horizontal" x:Name="FilterTabStrip">
+                <ToggleButton x:Name="TabAll" Content="All" Tag="{x:Null}"
+                              IsChecked="True" Click="FilterTab_Click"
+                              Style="{StaticResource FilterTabStyle}"/>
+                <ToggleButton x:Name="TabPlugins" Content="Plugins" Tag="Plugin"
+                              Click="FilterTab_Click" Style="{StaticResource FilterTabStyle}"/>
+                <ToggleButton x:Name="TabClothing" Content="Clothing" Tag="Clothing"
+                              Click="FilterTab_Click" Style="{StaticResource FilterTabStyle}"/>
+                <ToggleButton x:Name="TabHair" Content="Hair" Tag="Hair"
+                              Click="FilterTab_Click" Style="{StaticResource FilterTabStyle}"/>
+                <ToggleButton x:Name="TabAppearance" Content="Appearance" Tag="Appearance"
+                              Click="FilterTab_Click" Style="{StaticResource FilterTabStyle}"/>
+                <ToggleButton x:Name="TabMorph" Content="Morphs" Tag="Morph"
+                              Click="FilterTab_Click" Style="{StaticResource FilterTabStyle}"/>
+                <ToggleButton x:Name="TabTexture" Content="Textures" Tag="Texture"
+                              Click="FilterTab_Click" Style="{StaticResource FilterTabStyle}"/>
+                <ToggleButton x:Name="TabAsset" Content="Assets" Tag="Asset"
+                              Click="FilterTab_Click" Style="{StaticResource FilterTabStyle}"/>
+                <ToggleButton x:Name="TabOther" Content="Other" Tag="Other"
+                              Click="FilterTab_Click" Style="{StaticResource FilterTabStyle}"/>
+            </StackPanel>
+        </Border>
+
+        <DataGrid Grid.Row="5" x:Name="PluginsGrid" Margin="0,0,0,6">
             <DataGrid.Columns>
                 <DataGridTextColumn Header="Plugin" Binding="{Binding PluginId}" IsReadOnly="True" Width="2*"/>
                 <DataGridTextColumn Header="Current" Binding="{Binding CurrentVersionsDisplay}" IsReadOnly="True" Width="90"/>
@@ -402,9 +495,9 @@
             </DataGrid.Columns>
         </DataGrid>
 
-        <GridSplitter Grid.Row="4" ResizeDirection="Rows" ResizeBehavior="PreviousAndNext" Margin="0,2,0,2"/>
+        <GridSplitter Grid.Row="6" ResizeDirection="Rows" ResizeBehavior="PreviousAndNext" Margin="0,2,0,2"/>
 
-        <Grid Grid.Row="5">
+        <Grid Grid.Row="7">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>

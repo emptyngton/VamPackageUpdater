@@ -1,8 +1,11 @@
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Data;
 using System.Windows.Documents;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -27,7 +30,10 @@ public partial class MainWindow : Window
 
     private readonly ObservableCollection<PluginReferenceGroup> _plugins = new();
     private readonly PluginReferenceScanner _scanner = new();
+    private readonly MetaReader _metaReader = new();
     private Paragraph _logParagraph = null!;
+    private PluginCategory? _activeFilter;
+    private ICollectionView _pluginsView = null!;
 
     public MainWindow()
     {
@@ -37,7 +43,9 @@ public partial class MainWindow : Window
             LicenseCombo.Items.Add(key);
         LicenseCombo.SelectedIndex = 0;
 
-        PluginsGrid.ItemsSource = _plugins;
+        _pluginsView = CollectionViewSource.GetDefaultView(_plugins);
+        _pluginsView.Filter = PluginFilter;
+        PluginsGrid.ItemsSource = _pluginsView;
 
         InitLogDocument();
     }
@@ -74,14 +82,52 @@ public partial class MainWindow : Window
 
     private void SetAllLatestButton_Click(object sender, RoutedEventArgs e)
     {
-        foreach (var p in _plugins)
+        foreach (var p in VisiblePlugins())
             p.NewVersion = "latest";
     }
 
     private void ClearAllButton_Click(object sender, RoutedEventArgs e)
     {
-        foreach (var p in _plugins)
+        foreach (var p in VisiblePlugins())
             p.NewVersion = "";
+    }
+
+    private IEnumerable<PluginReferenceGroup> VisiblePlugins() =>
+        _pluginsView.Cast<PluginReferenceGroup>();
+
+    private bool PluginFilter(object obj)
+    {
+        if (obj is not PluginReferenceGroup g) return false;
+        return _activeFilter is null || g.PrimaryCategory == _activeFilter;
+    }
+
+    private void FilterTab_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not ToggleButton clicked) return;
+
+        // Uncheck the others (radio-group behavior)
+        foreach (var tab in FilterTabStrip.Children.OfType<ToggleButton>())
+            tab.IsChecked = tab == clicked;
+
+        _activeFilter = clicked.Tag is string s && Enum.TryParse<PluginCategory>(s, out var cat)
+            ? cat
+            : (PluginCategory?)null;
+
+        _pluginsView.Refresh();
+    }
+
+    private void UpdateTabCounts()
+    {
+        foreach (var tab in FilterTabStrip.Children.OfType<ToggleButton>())
+        {
+            var baseLabel = tab.Tag is string s && Enum.TryParse<PluginCategory>(s, out var cat)
+                ? cat.ToLabel()
+                : "All";
+            var count = tab.Tag is string s2 && Enum.TryParse<PluginCategory>(s2, out var cat2)
+                ? _plugins.Count(p => p.PrimaryCategory == cat2)
+                : _plugins.Count;
+            tab.Content = $"{baseLabel} ({count})";
+        }
     }
 
     private void VersionTextBox_PreviewMouseLeftButtonDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
@@ -97,6 +143,25 @@ public partial class MainWindow : Window
     {
         if (sender is TextBox tb)
             tb.SelectAll();
+    }
+
+    private void ShowMetaPanel(PackageMeta meta)
+    {
+        MetaCreator.Text = string.IsNullOrWhiteSpace(meta.CreatorName) ? "(unknown)" : meta.CreatorName;
+        MetaLicense.Text = string.IsNullOrWhiteSpace(meta.LicenseType) ? "(not specified)" : meta.LicenseType;
+        MetaSize.Text = FormatSize(meta.FileSize);
+        MetaFileCount.Text = meta.FileCount.ToString("N0");
+        var desc = string.IsNullOrWhiteSpace(meta.Description) ? "(no description)" : meta.Description!.Trim();
+        MetaDescription.Text = desc;
+        MetaPanel.Visibility = Visibility.Visible;
+    }
+
+    private static string FormatSize(long bytes)
+    {
+        if (bytes < 1024) return $"{bytes} B";
+        if (bytes < 1024L * 1024) return $"{bytes / 1024.0:F1} KB";
+        if (bytes < 1024L * 1024 * 1024) return $"{bytes / (1024.0 * 1024):F1} MB";
+        return $"{bytes / (1024.0 * 1024 * 1024):F2} GB";
     }
 
     private CollisionChoice PromptCollision(string existingPath)
@@ -125,7 +190,10 @@ public partial class MainWindow : Window
 
         try
         {
+            var metaTask = _metaReader.ReadAsync(FilePathBox.Text);
             var results = await _scanner.ScanAsync(FilePathBox.Text);
+            var meta = await metaTask;
+            ShowMetaPanel(meta);
             foreach (var g in results)
                 _plugins.Add(g);
 
@@ -184,6 +252,7 @@ public partial class MainWindow : Window
                 ClearAllButton.IsEnabled = true;
             }
             RescanButton.IsEnabled = true;
+            UpdateTabCounts();
         }
         catch (Exception ex)
         {

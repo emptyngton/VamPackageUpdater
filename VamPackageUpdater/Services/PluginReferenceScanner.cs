@@ -49,18 +49,58 @@ public sealed class PluginReferenceScanner
                 var id = m.Groups["id"].Value;
                 var version = m.Groups["version"].Value;
                 var line = LineFromOffset(lineStarts, m.Index);
+                var category = ClassifyAt(content, m.Index + m.Length);
 
                 if (!groups.TryGetValue(id, out var group))
                 {
                     group = new PluginReferenceGroup(id);
                     groups[id] = group;
                 }
-                group.AddOccurrence(version, entry.FullName, line);
+                group.AddOccurrence(version, entry.FullName, line, category);
             }
         }
 
         return groups.Values.OrderBy(g => g.PluginId, StringComparer.Ordinal).ToList();
     }
+
+    private static PluginCategory ClassifyAt(string content, int afterMatchIdx)
+    {
+        // Pattern: <Author.Pkg.Ver>:/<Path>
+        if (afterMatchIdx >= content.Length || content[afterMatchIdx] != ':')
+            return PluginCategory.Reference;
+
+        var pathStart = afterMatchIdx + 1;
+        if (pathStart < content.Length && content[pathStart] == '/') pathStart++;
+
+        // Read until quote, newline, or control char
+        var end = pathStart;
+        while (end < content.Length)
+        {
+            var ch = content[end];
+            if (ch == '"' || ch == '\n' || ch == '\r' || ch == '<') break;
+            end++;
+        }
+
+        if (end == pathStart) return PluginCategory.Reference;
+
+        // Use first ~80 chars only — more than enough to match the prefix
+        var len = Math.Min(end - pathStart, 80);
+        var path = content.AsSpan(pathStart, len);
+
+        if (StartsWithI(path, "Custom/Scripts/"))                    return PluginCategory.Plugin;
+        if (StartsWithI(path, "Custom/Clothing/"))                   return PluginCategory.Clothing;
+        if (StartsWithI(path, "Custom/Hair/"))                       return PluginCategory.Hair;
+        if (StartsWithI(path, "Custom/Atom/Person/Appearance/"))     return PluginCategory.Appearance;
+        if (StartsWithI(path, "Custom/Atom/Person/Morphs/"))         return PluginCategory.Morph;
+        if (StartsWithI(path, "Custom/Atom/Person/Textures/"))       return PluginCategory.Texture;
+        if (StartsWithI(path, "Custom/Atom/Person/Pose/"))           return PluginCategory.Pose;
+        if (StartsWithI(path, "Custom/Assets/"))                     return PluginCategory.Asset;
+        if (StartsWithI(path, "Saves/scene/"))                       return PluginCategory.Scene;
+        return PluginCategory.Other;
+    }
+
+    private static bool StartsWithI(ReadOnlySpan<char> span, string prefix) =>
+        span.StartsWith(prefix.AsSpan(), StringComparison.OrdinalIgnoreCase);
 
     private static List<int> BuildLineStarts(string text)
     {
