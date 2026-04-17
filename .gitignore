@@ -1,0 +1,20 @@
+## Build output
+bin/
+obj/
+out/
+publish/
+
+## Rider / JetBrains
+.idea/
+*.DotSettings.user
+*.sln.iml
+
+## Visual Studio
+.vs/
+*.user
+*.suo
+
+## OS
+Thumbs.db
+.DS_Store
+desktop.ini
