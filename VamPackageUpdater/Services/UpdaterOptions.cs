@@ -6,6 +6,7 @@ public sealed class UpdaterOptions
 {
     public string SourceVarPath { get; set; } = "";
     public List<PluginUpdate> PluginUpdates { get; set; } = new();
+    public List<VoxtaResourceAttachment> VoxtaAttachments { get; set; } = new();
     public string? NewLicenseLine { get; set; }
     public bool DryRun { get; set; }
     public Func<string, CollisionChoice>? OnCollision { get; set; }

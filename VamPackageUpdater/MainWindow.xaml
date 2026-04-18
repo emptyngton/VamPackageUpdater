@@ -1,7 +1,7 @@
 <Window x:Class="VamPackageUpdater.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="VAM Package Updater" Height="720" Width="700"
+        Title="VAM Package Updater" Height="760" Width="760"
         Icon="Assets/icon.png"
         WindowStartupLocation="CenterScreen"
         Background="#1e1e1e" Foreground="#e0e0e0"
@@ -361,6 +361,41 @@
                 </Trigger>
             </Style.Triggers>
         </Style>
+
+        <!-- Section tabs (Plugins / Voxta Resources) -->
+        <Style x:Key="SectionTabStyle" TargetType="ToggleButton">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="#a0a0a0"/>
+            <Setter Property="BorderBrush" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0,0,0,3"/>
+            <Setter Property="Padding" Value="16,7"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="Bd"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#2a2a2a"/>
+                                <Setter Property="Foreground" Value="#e0e0e0"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="#4EC9B0"/>
+                                <Setter Property="Foreground" Value="#ffffff"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Window.Resources>
 
     <Grid Margin="15">
@@ -423,77 +458,183 @@
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
-            <TextBlock Grid.Column="0" Text="2. Plugin references" FontWeight="Bold"/>
-            <StackPanel Grid.Column="1" Orientation="Horizontal">
-                <Button Content="Set all to latest" Click="SetAllLatestButton_Click"
-                        IsEnabled="False" x:Name="SetAllLatestButton" Margin="0,0,6,0" Padding="8,3"/>
-                <Button Content="Clear all" Click="ClearAllButton_Click"
-                        IsEnabled="False" x:Name="ClearAllButton" Margin="0,0,6,0" Padding="8,3"/>
-                <Button Content="Rescan" Click="RescanButton_Click"
-                        IsEnabled="False" x:Name="RescanButton" MinWidth="80" Padding="8,3"/>
-            </StackPanel>
+            <TextBlock Grid.Column="0" Text="2. Edit" FontWeight="Bold"/>
+            <Button Grid.Column="1" Content="Rescan" Click="RescanButton_Click"
+                    IsEnabled="False" x:Name="RescanButton" MinWidth="80" Padding="8,3"/>
         </Grid>
 
-        <Border Grid.Row="4" BorderBrush="#2a2a2a" BorderThickness="0,0,0,1" Margin="0,2,0,6">
-            <StackPanel Orientation="Horizontal" x:Name="FilterTabStrip">
-                <ToggleButton x:Name="TabAll" Content="All" Tag="{x:Null}"
-                              IsChecked="True" Click="FilterTab_Click"
-                              Style="{StaticResource FilterTabStyle}"/>
-                <ToggleButton x:Name="TabPlugins" Content="Plugins" Tag="Plugin"
-                              Click="FilterTab_Click" Style="{StaticResource FilterTabStyle}"/>
-                <ToggleButton x:Name="TabClothing" Content="Clothing" Tag="Clothing"
-                              Click="FilterTab_Click" Style="{StaticResource FilterTabStyle}"/>
-                <ToggleButton x:Name="TabHair" Content="Hair" Tag="Hair"
-                              Click="FilterTab_Click" Style="{StaticResource FilterTabStyle}"/>
-                <ToggleButton x:Name="TabAppearance" Content="Appearance" Tag="Appearance"
-                              Click="FilterTab_Click" Style="{StaticResource FilterTabStyle}"/>
-                <ToggleButton x:Name="TabMorph" Content="Morphs" Tag="Morph"
-                              Click="FilterTab_Click" Style="{StaticResource FilterTabStyle}"/>
-                <ToggleButton x:Name="TabTexture" Content="Textures" Tag="Texture"
-                              Click="FilterTab_Click" Style="{StaticResource FilterTabStyle}"/>
-                <ToggleButton x:Name="TabAsset" Content="Assets" Tag="Asset"
-                              Click="FilterTab_Click" Style="{StaticResource FilterTabStyle}"/>
-                <ToggleButton x:Name="TabOther" Content="Other" Tag="Other"
-                              Click="FilterTab_Click" Style="{StaticResource FilterTabStyle}"/>
+        <Border Grid.Row="4" BorderBrush="#2a2a2a" BorderThickness="0,0,0,1" Margin="0,2,0,0">
+            <StackPanel Orientation="Horizontal" x:Name="SectionTabStrip">
+                <ToggleButton x:Name="SectionTabPlugins" Content="Plugin references"
+                              IsChecked="True" Click="SectionTab_Click" Tag="Plugins"
+                              Style="{StaticResource SectionTabStyle}"/>
+                <ToggleButton x:Name="SectionTabVoxta" Content="Voxta resources"
+                              Click="SectionTab_Click" Tag="Voxta"
+                              Style="{StaticResource SectionTabStyle}"/>
             </StackPanel>
         </Border>
 
-        <DataGrid Grid.Row="5" x:Name="PluginsGrid" Margin="0,0,0,6">
-            <DataGrid.Columns>
-                <DataGridTextColumn Header="Plugin" Binding="{Binding PluginId}" IsReadOnly="True" Width="2*"/>
-                <DataGridTextColumn Header="Current" Binding="{Binding CurrentVersionsDisplay}" IsReadOnly="True" Width="90"/>
-                <DataGridTextColumn Header="Refs" Binding="{Binding OccurrenceCount}" IsReadOnly="True" Width="55"/>
-                <DataGridTemplateColumn Header="New Version" Width="200" SortMemberPath="NewVersion">
-                    <DataGridTemplateColumn.CellTemplate>
-                        <DataTemplate>
-                            <Grid Margin="4,3">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <TextBox Grid.Column="0"
-                                         Text="{Binding NewVersion, UpdateSourceTrigger=PropertyChanged, Mode=TwoWay}"
-                                         Background="#0f0f0f"
-                                         Foreground="#e0e0e0"
-                                         CaretBrush="#e0e0e0"
-                                         BorderBrush="#4a4a4a"
-                                         BorderThickness="1"
-                                         Padding="5,3"
-                                         VerticalContentAlignment="Center"
-                                         FontFamily="Cascadia Mono, Consolas"
-                                         GotFocus="VersionTextBox_GotFocus"
-                                         PreviewMouseLeftButtonDown="VersionTextBox_PreviewMouseLeftButtonDown"/>
-                                <Button Grid.Column="1" Content="latest"
-                                        Click="SetRowLatestButton_Click"
-                                        Tag="{Binding}"
-                                        Margin="4,0,0,0" Padding="6,2"
-                                        FontSize="11"/>
-                            </Grid>
-                        </DataTemplate>
-                    </DataGridTemplateColumn.CellTemplate>
-                </DataGridTemplateColumn>
-            </DataGrid.Columns>
-        </DataGrid>
+        <Grid Grid.Row="5" Margin="0,0,0,6">
+            <!-- PLUGINS SECTION -->
+            <Grid x:Name="PluginsSection">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
+                <StackPanel Grid.Row="0" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,6,0,2">
+                    <Button Content="Set all to latest" Click="SetAllLatestButton_Click"
+                            IsEnabled="False" x:Name="SetAllLatestButton" Margin="0,0,6,0" Padding="8,3"/>
+                    <Button Content="Clear all" Click="ClearAllButton_Click"
+                            IsEnabled="False" x:Name="ClearAllButton" Padding="8,3"/>
+                </StackPanel>
+
+                <Border Grid.Row="1" BorderBrush="#2a2a2a" BorderThickness="0,0,0,1" Margin="0,4,0,6">
+                    <StackPanel Orientation="Horizontal" x:Name="FilterTabStrip">
+                        <ToggleButton x:Name="TabAll" Content="All" Tag="{x:Null}"
+                                      IsChecked="True" Click="FilterTab_Click"
+                                      Style="{StaticResource FilterTabStyle}"/>
+                        <ToggleButton x:Name="TabPlugins" Content="Plugins" Tag="Plugin"
+                                      Click="FilterTab_Click" Style="{StaticResource FilterTabStyle}"/>
+                        <ToggleButton x:Name="TabClothing" Content="Clothing" Tag="Clothing"
+                                      Click="FilterTab_Click" Style="{StaticResource FilterTabStyle}"/>
+                        <ToggleButton x:Name="TabHair" Content="Hair" Tag="Hair"
+                                      Click="FilterTab_Click" Style="{StaticResource FilterTabStyle}"/>
+                        <ToggleButton x:Name="TabAppearance" Content="Appearance" Tag="Appearance"
+                                      Click="FilterTab_Click" Style="{StaticResource FilterTabStyle}"/>
+                        <ToggleButton x:Name="TabMorph" Content="Morphs" Tag="Morph"
+                                      Click="FilterTab_Click" Style="{StaticResource FilterTabStyle}"/>
+                        <ToggleButton x:Name="TabTexture" Content="Textures" Tag="Texture"
+                                      Click="FilterTab_Click" Style="{StaticResource FilterTabStyle}"/>
+                        <ToggleButton x:Name="TabAsset" Content="Assets" Tag="Asset"
+                                      Click="FilterTab_Click" Style="{StaticResource FilterTabStyle}"/>
+                        <ToggleButton x:Name="TabOther" Content="Other" Tag="Other"
+                                      Click="FilterTab_Click" Style="{StaticResource FilterTabStyle}"/>
+                    </StackPanel>
+                </Border>
+
+                <DataGrid Grid.Row="2" x:Name="PluginsGrid">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Plugin" Binding="{Binding PluginId}" IsReadOnly="True" Width="2*"/>
+                        <DataGridTextColumn Header="Current" Binding="{Binding CurrentVersionsDisplay}" IsReadOnly="True" Width="90"/>
+                        <DataGridTextColumn Header="Refs" Binding="{Binding OccurrenceCount}" IsReadOnly="True" Width="55"/>
+                        <DataGridTemplateColumn Header="New Version" Width="200" SortMemberPath="NewVersion">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="4,3">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBox Grid.Column="0"
+                                                 Text="{Binding NewVersion, UpdateSourceTrigger=PropertyChanged, Mode=TwoWay}"
+                                                 Background="#0f0f0f"
+                                                 Foreground="#e0e0e0"
+                                                 CaretBrush="#e0e0e0"
+                                                 BorderBrush="#4a4a4a"
+                                                 BorderThickness="1"
+                                                 Padding="5,3"
+                                                 VerticalContentAlignment="Center"
+                                                 FontFamily="Cascadia Mono, Consolas"
+                                                 GotFocus="VersionTextBox_GotFocus"
+                                                 PreviewMouseLeftButtonDown="VersionTextBox_PreviewMouseLeftButtonDown"/>
+                                        <Button Grid.Column="1" Content="latest"
+                                                Click="SetRowLatestButton_Click"
+                                                Tag="{Binding}"
+                                                Margin="4,0,0,0" Padding="6,2"
+                                                FontSize="11"/>
+                                    </Grid>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </Grid>
+
+            <!-- VOXTA RESOURCES SECTION -->
+            <Grid x:Name="VoxtaSection" Visibility="Collapsed">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
+                <StackPanel Grid.Row="0" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,6,0,2">
+                    <Button Content="Clear all attachments" Click="ClearAllAttachmentsButton_Click"
+                            IsEnabled="False" x:Name="ClearAllAttachmentsButton" Padding="8,3"/>
+                </StackPanel>
+
+                <TextBlock Grid.Row="1" x:Name="VoxtaSectionHelp"
+                           Foreground="#808080" FontSize="12" Margin="0,6,0,8" TextWrapping="Wrap"
+                           Text="Scene-referenced Voxta resources. For every &quot;Missing&quot; row, attach the exported PNG from Voxta Studio — it will be embedded inside the .var when you apply."/>
+
+                <DataGrid Grid.Row="2" x:Name="VoxtaGrid">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Kind" Binding="{Binding KindLabel}" IsReadOnly="True" Width="110"/>
+                        <DataGridTextColumn Header="Name / UUID" Binding="{Binding NameOrId}" IsReadOnly="True" Width="2*"/>
+                        <DataGridTemplateColumn Header="Status" Width="110">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding StatusLabel}" FontWeight="SemiBold" VerticalAlignment="Center">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Foreground" Value="#c0c0c0"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding StatusLabel}" Value="Bundled">
+                                                        <Setter Property="Foreground" Value="#6A9955"/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding StatusLabel}" Value="Missing">
+                                                        <Setter Property="Foreground" Value="#F48771"/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding StatusLabel}" Value="Attached">
+                                                        <Setter Property="Foreground" Value="#569CD6"/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding StatusLabel}" Value="Orphan">
+                                                        <Setter Property="Foreground" Value="#808080"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="Attach PNG" Width="240">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="4,3">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0"
+                                                   Text="{Binding AttachedFileName}"
+                                                   Foreground="#569CD6"
+                                                   FontFamily="Cascadia Mono, Consolas"
+                                                   VerticalAlignment="Center"
+                                                   TextTrimming="CharacterEllipsis"/>
+                                        <Button Grid.Column="1" Content="..."
+                                                Click="AttachResourceButton_Click"
+                                                Tag="{Binding}"
+                                                Margin="4,0,0,0" Padding="8,2"
+                                                FontSize="11"
+                                                ToolTip="Select a PNG file exported from Voxta"/>
+                                        <Button Grid.Column="2" Content="x"
+                                                Click="DetachResourceButton_Click"
+                                                Tag="{Binding}"
+                                                Margin="4,0,0,0" Padding="6,2"
+                                                FontSize="11"
+                                                ToolTip="Remove the staged attachment"/>
+                                    </Grid>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </Grid>
+        </Grid>
 
         <GridSplitter Grid.Row="6" ResizeDirection="Rows" ResizeBehavior="PreviousAndNext" Margin="0,2,0,2"/>
 

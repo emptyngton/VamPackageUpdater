@@ -1,6 +1,7 @@
 using System.IO;
 using System.IO.Compression;
 using System.Text.RegularExpressions;
+using VamPackageUpdater.Models;
 
 namespace VamPackageUpdater.Services;
 
@@ -23,8 +24,8 @@ public sealed class PackageUpdater
         if (!File.Exists(opts.SourceVarPath))
             return UpdateResult.Fail($"Source .var not found: {opts.SourceVarPath}");
 
-        if (opts.PluginUpdates.Count == 0 && opts.NewLicenseLine is null)
-            return UpdateResult.Fail("Nothing to do — no plugin updates and no license change.");
+        if (opts.PluginUpdates.Count == 0 && opts.NewLicenseLine is null && opts.VoxtaAttachments.Count == 0)
+            return UpdateResult.Fail("Nothing to do — no plugin updates, no license change, no Voxta attachments.");
 
         var patterns = opts.PluginUpdates
             .Where(u => !string.IsNullOrWhiteSpace(u.NewVersion))
@@ -46,6 +47,12 @@ public sealed class PackageUpdater
         _log(opts.NewLicenseLine is null
             ? "License will not be changed."
             : "License will be changed.");
+        if (opts.VoxtaAttachments.Count > 0)
+        {
+            _log($"Voxta attachments queued: {opts.VoxtaAttachments.Count}");
+            foreach (var a in opts.VoxtaAttachments)
+                _log($"  - {a.Kind.ToLabel()}: {a.Id}  <-  {Path.GetFileName(a.SourcePngPath)}");
+        }
         _log(new string('-', 50));
 
         var tempDir = Path.Combine(Path.GetTempPath(), "VamPackageUpdater_" + Guid.NewGuid().ToString("N"));
@@ -68,6 +75,7 @@ public sealed class PackageUpdater
             var totalReplacements = 0;
             var perPluginCounts = new Dictionary<string, int>();
             var licenseUpdated = false;
+            var attachmentsEmbedded = 0;
 
             var metaJson = Path.Combine(tempDir, "meta.json");
             if (opts.NewLicenseLine is not null && File.Exists(metaJson))
@@ -125,7 +133,31 @@ public sealed class PackageUpdater
                 }
             }
 
-            if (totalReplacements == 0 && !licenseUpdated)
+            if (opts.VoxtaAttachments.Count > 0)
+            {
+                _log("");
+                _log("Embedding Voxta resources...");
+                foreach (var attachment in opts.VoxtaAttachments)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    if (!File.Exists(attachment.SourcePngPath))
+                    {
+                        _log($"  - SKIPPED ({attachment.Id}): source file not found at '{attachment.SourcePngPath}'.");
+                        continue;
+                    }
+                    var relTarget = attachment.Kind.BuildBundledPath(attachment.Id);
+                    var absTarget = Path.Combine(tempDir, relTarget.Replace('/', Path.DirectorySeparatorChar));
+                    var targetDir = Path.GetDirectoryName(absTarget);
+                    if (!string.IsNullOrEmpty(targetDir)) Directory.CreateDirectory(targetDir);
+                    var existed = File.Exists(absTarget);
+                    File.Copy(attachment.SourcePngPath, absTarget, overwrite: true);
+                    attachmentsEmbedded++;
+                    var verb = existed ? "Replaced" : "Embedded";
+                    _log($"  - {verb}: {relTarget}");
+                }
+            }
+
+            if (totalReplacements == 0 && !licenseUpdated && attachmentsEmbedded == 0)
             {
                 _log("");
                 _log("- No changes made. No new file created.");

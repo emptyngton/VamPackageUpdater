@@ -29,7 +29,9 @@ public partial class MainWindow : Window
     private static readonly Brush SuccessBrush = Freeze(0x6A, 0x99, 0x55);
 
     private readonly ObservableCollection<PluginReferenceGroup> _plugins = new();
+    private readonly ObservableCollection<VoxtaResourceRef> _voxtaResources = new();
     private readonly PluginReferenceScanner _scanner = new();
+    private readonly VoxtaResourceScanner _voxtaScanner = new();
     private readonly MetaReader _metaReader = new();
     private Paragraph _logParagraph = null!;
     private PluginCategory? _activeFilter;
@@ -46,6 +48,8 @@ public partial class MainWindow : Window
         _pluginsView = CollectionViewSource.GetDefaultView(_plugins);
         _pluginsView.Filter = PluginFilter;
         PluginsGrid.ItemsSource = _pluginsView;
+
+        VoxtaGrid.ItemsSource = _voxtaResources;
 
         InitLogDocument();
     }
@@ -182,83 +186,252 @@ public partial class MainWindow : Window
         if (string.IsNullOrEmpty(FilePathBox.Text)) return;
 
         _plugins.Clear();
+        _voxtaResources.Clear();
         RescanButton.IsEnabled = false;
         UpdateButton.IsEnabled = false;
         SetAllLatestButton.IsEnabled = false;
         ClearAllButton.IsEnabled = false;
+        ClearAllAttachmentsButton.IsEnabled = false;
         LogParts(("Scanning ", SubduedBrush), ($"'{Path.GetFileName(FilePathBox.Text)}'", PathBrush), ("...", SubduedBrush));
 
         try
         {
             var metaTask = _metaReader.ReadAsync(FilePathBox.Text);
+            var voxtaTask = _voxtaScanner.ScanAsync(FilePathBox.Text);
             var results = await _scanner.ScanAsync(FilePathBox.Text);
             var meta = await metaTask;
+            var voxtaResults = await voxtaTask;
             ShowMetaPanel(meta);
+
             foreach (var g in results)
                 _plugins.Add(g);
+            foreach (var r in voxtaResults)
+                _voxtaResources.Add(r);
 
-            if (_plugins.Count == 0)
-            {
-                Log("No plugin references found in the package.", SubduedBrush);
-                UpdateButton.IsEnabled = false;
-                SetAllLatestButton.IsEnabled = false;
-                ClearAllButton.IsEnabled = false;
-            }
-            else
-            {
-                var totalRefs = _plugins.Sum(p => p.OccurrenceCount);
-                var totalFiles = _plugins.SelectMany(p => p.Files).Distinct(StringComparer.Ordinal).Count();
+            LogPluginScanResults();
+            LogVoxtaScanResults();
 
-                LogParts(
-                    ("Found ", HeaderBrush),
-                    (_plugins.Count.ToString(), NumberBrush),
-                    (" unique plugin(s), ", HeaderBrush),
-                    (totalRefs.ToString(), NumberBrush),
-                    (" reference(s) across ", HeaderBrush),
-                    (totalFiles.ToString(), NumberBrush),
-                    (" file(s):", HeaderBrush));
-                Log("");
+            var hasPlugins = _plugins.Count > 0;
+            var hasVoxta = _voxtaResources.Count > 0;
 
-                foreach (var p in _plugins)
-                {
-                    LogParts(
-                        ("  ", DefaultBrush),
-                        (p.PluginId, PluginBrush),
-                        ("  @ ", SubduedBrush),
-                        (p.CurrentVersionsDisplay, VersionBrush),
-                        ("    (", SubduedBrush),
-                        (p.OccurrenceCount.ToString(), NumberBrush),
-                        (" ref(s) in ", SubduedBrush),
-                        (p.FileCount.ToString(), NumberBrush),
-                        (" file(s))", SubduedBrush));
-
-                    foreach (var fc in p.FileLines.OrderBy(kv => kv.Key, StringComparer.Ordinal))
-                    {
-                        var label = fc.Value.Count == 1 ? "line " : "lines ";
-                        LogParts(
-                            ("      ", DefaultBrush),
-                            (fc.Key, PathBrush),
-                            ("  (", SubduedBrush),
-                            (label, SubduedBrush),
-                            (string.Join(", ", fc.Value), LineBrush),
-                            (")", SubduedBrush));
-                    }
-                }
-
-                Log("");
-                Log("Edit the New Version column to queue updates, then click Update Package.", SubduedBrush);
-                UpdateButton.IsEnabled = true;
-                SetAllLatestButton.IsEnabled = true;
-                ClearAllButton.IsEnabled = true;
-            }
+            UpdateButton.IsEnabled = hasPlugins || hasVoxta;
+            SetAllLatestButton.IsEnabled = hasPlugins;
+            ClearAllButton.IsEnabled = hasPlugins;
+            ClearAllAttachmentsButton.IsEnabled = hasVoxta;
             RescanButton.IsEnabled = true;
             UpdateTabCounts();
+            UpdateSectionTabLabels();
+
+            // Auto-jump to Voxta tab if there are missing resources — they're the actionable ones.
+            if (_voxtaResources.Any(r => r.Status == VoxtaResourceStatus.Missing))
+                SwitchSection("Voxta");
         }
         catch (Exception ex)
         {
             Log($"Scan failed: {ex.Message}", ErrorBrush);
             UpdateButton.IsEnabled = false;
             RescanButton.IsEnabled = !string.IsNullOrEmpty(FilePathBox.Text);
+        }
+    }
+
+    private void LogPluginScanResults()
+    {
+        if (_plugins.Count == 0)
+        {
+            Log("No plugin references found in the package.", SubduedBrush);
+            return;
+        }
+
+        var totalRefs = _plugins.Sum(p => p.OccurrenceCount);
+        var totalFiles = _plugins.SelectMany(p => p.Files).Distinct(StringComparer.Ordinal).Count();
+
+        LogParts(
+            ("Found ", HeaderBrush),
+            (_plugins.Count.ToString(), NumberBrush),
+            (" unique plugin(s), ", HeaderBrush),
+            (totalRefs.ToString(), NumberBrush),
+            (" reference(s) across ", HeaderBrush),
+            (totalFiles.ToString(), NumberBrush),
+            (" file(s):", HeaderBrush));
+        Log("");
+
+        foreach (var p in _plugins)
+        {
+            LogParts(
+                ("  ", DefaultBrush),
+                (p.PluginId, PluginBrush),
+                ("  @ ", SubduedBrush),
+                (p.CurrentVersionsDisplay, VersionBrush),
+                ("    (", SubduedBrush),
+                (p.OccurrenceCount.ToString(), NumberBrush),
+                (" ref(s) in ", SubduedBrush),
+                (p.FileCount.ToString(), NumberBrush),
+                (" file(s))", SubduedBrush));
+
+            foreach (var fc in p.FileLines.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+            {
+                var label = fc.Value.Count == 1 ? "line " : "lines ";
+                LogParts(
+                    ("      ", DefaultBrush),
+                    (fc.Key, PathBrush),
+                    ("  (", SubduedBrush),
+                    (label, SubduedBrush),
+                    (string.Join(", ", fc.Value), LineBrush),
+                    (")", SubduedBrush));
+            }
+        }
+
+        Log("");
+        Log("Edit the New Version column to queue updates, then click Update Package.", SubduedBrush);
+    }
+
+    private void LogVoxtaScanResults()
+    {
+        if (_voxtaResources.Count == 0) return;
+
+        var missing = _voxtaResources.Count(r => r.Status == VoxtaResourceStatus.Missing);
+        var bundled = _voxtaResources.Count(r => r.Status == VoxtaResourceStatus.Bundled);
+        var orphans = _voxtaResources.Count(r => r.Status == VoxtaResourceStatus.Orphan);
+
+        Log("");
+        LogParts(
+            ("Voxta resources: ", HeaderBrush),
+            (bundled.ToString(), NumberBrush),
+            (" bundled, ", HeaderBrush),
+            (missing.ToString(), missing > 0 ? ErrorBrush : NumberBrush),
+            (" missing", HeaderBrush),
+            (orphans > 0 ? $", {orphans} orphan" : "", SubduedBrush),
+            (".", HeaderBrush));
+
+        foreach (var r in _voxtaResources)
+        {
+            var statusBrush = r.Status switch
+            {
+                VoxtaResourceStatus.Bundled => SuccessBrush,
+                VoxtaResourceStatus.Missing => ErrorBrush,
+                VoxtaResourceStatus.Attached => PathBrush,
+                VoxtaResourceStatus.Orphan => SubduedBrush,
+                _ => DefaultBrush
+            };
+            LogParts(
+                ("  ", DefaultBrush),
+                ($"[{r.StatusLabel}] ", statusBrush),
+                ($"{r.KindLabel} ", PluginBrush),
+                (r.NameOrId, VersionBrush),
+                (string.IsNullOrWhiteSpace(r.DisplayName) ? "" : $"  ({r.Id})", SubduedBrush));
+        }
+
+        if (missing > 0)
+        {
+            Log("");
+            Log("Open the 'Voxta resources' tab and attach PNGs for the missing entries.", SubduedBrush);
+        }
+    }
+
+    private void SectionTab_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not ToggleButton tb) return;
+        var section = tb.Tag as string ?? "Plugins";
+        SwitchSection(section);
+    }
+
+    private void SwitchSection(string section)
+    {
+        var wantVoxta = section == "Voxta";
+        SectionTabPlugins.IsChecked = !wantVoxta;
+        SectionTabVoxta.IsChecked = wantVoxta;
+        PluginsSection.Visibility = wantVoxta ? Visibility.Collapsed : Visibility.Visible;
+        VoxtaSection.Visibility = wantVoxta ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void UpdateSectionTabLabels()
+    {
+        var pluginsCount = _plugins.Count;
+        var missing = _voxtaResources.Count(r => r.Status == VoxtaResourceStatus.Missing);
+        var voxtaTotal = _voxtaResources.Count;
+
+        SectionTabPlugins.Content = pluginsCount > 0 ? $"Plugin references ({pluginsCount})" : "Plugin references";
+        SectionTabVoxta.Content = voxtaTotal == 0
+            ? "Voxta resources"
+            : missing > 0
+                ? $"Voxta resources ({missing} missing)"
+                : $"Voxta resources ({voxtaTotal})";
+    }
+
+    private void AttachResourceButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button btn || btn.Tag is not VoxtaResourceRef r) return;
+
+        var dialog = new OpenFileDialog
+        {
+            Title = $"Attach PNG for {r.KindLabel} {r.NameOrId}",
+            Filter = "PNG files (*.png)|*.png|All files (*.*)|*.*"
+        };
+
+        if (dialog.ShowDialog() != true) return;
+
+        if (!IsPngFile(dialog.FileName))
+        {
+            Log($"Not a valid PNG file: {Path.GetFileName(dialog.FileName)}", ErrorBrush);
+            return;
+        }
+
+        r.AttachedSourcePath = dialog.FileName;
+        if (r.Status != VoxtaResourceStatus.Bundled) // keep Bundled visible even if user stages an override
+            r.Status = VoxtaResourceStatus.Attached;
+
+        LogParts(
+            ("Attached ", HeaderBrush),
+            ($"{r.KindLabel} ", PluginBrush),
+            (r.NameOrId, VersionBrush),
+            ("  <-  ", SubduedBrush),
+            (Path.GetFileName(dialog.FileName), PathBrush));
+
+        UpdateSectionTabLabels();
+    }
+
+    private void DetachResourceButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button btn || btn.Tag is not VoxtaResourceRef r) return;
+        if (string.IsNullOrEmpty(r.AttachedSourcePath)) return;
+
+        r.AttachedSourcePath = null;
+        if (r.Status == VoxtaResourceStatus.Attached)
+            r.Status = string.IsNullOrEmpty(r.BundledPath)
+                ? VoxtaResourceStatus.Missing
+                : VoxtaResourceStatus.Bundled;
+
+        UpdateSectionTabLabels();
+    }
+
+    private void ClearAllAttachmentsButton_Click(object sender, RoutedEventArgs e)
+    {
+        foreach (var r in _voxtaResources)
+        {
+            if (string.IsNullOrEmpty(r.AttachedSourcePath)) continue;
+            r.AttachedSourcePath = null;
+            if (r.Status == VoxtaResourceStatus.Attached)
+                r.Status = string.IsNullOrEmpty(r.BundledPath)
+                    ? VoxtaResourceStatus.Missing
+                    : VoxtaResourceStatus.Bundled;
+        }
+        UpdateSectionTabLabels();
+    }
+
+    private static bool IsPngFile(string path)
+    {
+        try
+        {
+            using var fs = File.OpenRead(path);
+            Span<byte> header = stackalloc byte[8];
+            if (fs.Read(header) != 8) return false;
+            // PNG signature: 89 50 4E 47 0D 0A 1A 0A
+            return header[0] == 0x89 && header[1] == 0x50 && header[2] == 0x4E && header[3] == 0x47
+                && header[4] == 0x0D && header[5] == 0x0A && header[6] == 0x1A && header[7] == 0x0A;
+        }
+        catch
+        {
+            return false;
         }
     }
 
@@ -278,12 +451,18 @@ public partial class MainWindow : Window
             .Select(p => new PluginUpdate(p.PluginId, p.NewVersion.Trim()))
             .ToList();
 
+        var attachments = _voxtaResources
+            .Where(r => !string.IsNullOrEmpty(r.AttachedSourcePath))
+            .Select(r => new VoxtaResourceAttachment(r.Kind, r.Id, r.AttachedSourcePath!))
+            .ToList();
+
         var selectedLicense = LicenseCombo.SelectedItem as string ?? "Do not change license";
 
         var options = new UpdaterOptions
         {
             SourceVarPath = FilePathBox.Text,
             PluginUpdates = updates,
+            VoxtaAttachments = attachments,
             NewLicenseLine = Licenses.All[selectedLicense],
             DryRun = DryRunCheck.IsChecked == true,
             OnCollision = PromptCollision
@@ -304,9 +483,11 @@ public partial class MainWindow : Window
         finally
         {
             var hasPlugins = _plugins.Count > 0;
-            UpdateButton.IsEnabled = hasPlugins;
+            var hasVoxta = _voxtaResources.Count > 0;
+            UpdateButton.IsEnabled = hasPlugins || hasVoxta;
             SetAllLatestButton.IsEnabled = hasPlugins;
             ClearAllButton.IsEnabled = hasPlugins;
+            ClearAllAttachmentsButton.IsEnabled = hasVoxta;
             RescanButton.IsEnabled = true;
         }
     }
