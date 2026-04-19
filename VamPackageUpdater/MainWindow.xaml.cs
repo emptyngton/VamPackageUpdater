@@ -686,6 +686,15 @@ public partial class MainWindow : Window
 
         if (dep.Status == HubDependencyStatus.VersionMismatch)
         {
+            // If the mismatched file is already force-installed on disk, the action
+            // is Delete — remove the substitute .var. Otherwise the action is the
+            // force-install confirm dialog below.
+            if (dep.HasLocalFile)
+            {
+                DeleteInstalledDep(dep);
+                return;
+            }
+
             var requested = dep.RequestedVersion?.ToString() ?? "?";
             var hubHas = dep.HubLatestVersion?.ToString() ?? "?";
             var confirm = MessageBox.Show(
@@ -865,7 +874,19 @@ public partial class MainWindow : Window
             File.Delete(path);
             dep.InstalledPath = null;
             dep.InstalledVersion = null;
-            dep.Status = HubDependencyStatus.Missing;
+
+            // If the dep was a VersionMismatch (scene asks for vX, Hub only has vY)
+            // that we force-installed, restore that status instead of flipping to Missing —
+            // the scene's exact-version ref is still genuinely unsatisfiable by Hub.
+            var isUnresolvableMismatch =
+                dep.RequestedVersion.HasValue &&
+                dep.HubLatestVersion.HasValue &&
+                dep.RequestedVersion != dep.HubLatestVersion;
+
+            dep.Status = isUnresolvableMismatch
+                ? HubDependencyStatus.VersionMismatch
+                : HubDependencyStatus.Missing;
+
             LogParts(
                 ("Deleted ", HeaderBrush),
                 (filename, PathBrush),

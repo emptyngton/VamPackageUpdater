@@ -42,8 +42,22 @@ public sealed class HubDependency : INotifyPropertyChanged
     /// <summary>Direct download URL returned by Hub.</summary>
     public string? DownloadUrl { get; set; }
 
+    private string? _installedPath;
     /// <summary>Absolute path on disk if found in AddonPackages.</summary>
-    public string? InstalledPath { get; set; }
+    public string? InstalledPath
+    {
+        get => _installedPath;
+        set
+        {
+            if (_installedPath == value) return;
+            _installedPath = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(HasLocalFile));
+        }
+    }
+
+    /// <summary>True when a matching .var exists on disk — either the scene's version, or a Hub substitute we force-installed.</summary>
+    public bool HasLocalFile => !string.IsNullOrEmpty(InstalledPath);
 
     /// <summary>Version number of the local .var satisfying this ref (null if not installed).</summary>
     public int? InstalledVersion { get; set; }
