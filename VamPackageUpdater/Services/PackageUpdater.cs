@@ -95,6 +95,7 @@ public sealed class PackageUpdater
                 }
             }
 
+            var metaJsonChangedByRegex = false;
             if (patterns.Count > 0)
             {
                 foreach (var file in EnumerateScannableFiles(tempDir))
@@ -121,6 +122,8 @@ public sealed class PackageUpdater
                         File.WriteAllText(file, text);
                         var rel = Path.GetRelativePath(tempDir, file);
                         _log($"  - Updated: {rel}");
+                        if (string.Equals(file, metaJson, StringComparison.OrdinalIgnoreCase))
+                            metaJsonChangedByRegex = true;
                     }
                 }
 
@@ -130,6 +133,24 @@ public sealed class PackageUpdater
                     _log("Per-plugin replacement counts:");
                     foreach (var kv in perPluginCounts.OrderBy(k => k.Key, StringComparer.Ordinal))
                         _log($"  - {kv.Key}: {kv.Value}");
+                }
+            }
+
+            // When multiple versions of a plugin collapse to the same key
+            // (e.g. Timeline.283 + Timeline.287 -> Timeline.latest), the regex
+            // pass produces duplicate JSON keys inside meta.json's dependencies
+            // tree. Collapse them now so the output is valid JSON.
+            if (metaJsonChangedByRegex && File.Exists(metaJson))
+            {
+                var dedupResult = MetaJsonDeduplicator.DedupIfNeeded(metaJson);
+                switch (dedupResult)
+                {
+                    case MetaJsonDeduplicator.DedupResult.Deduplicated:
+                        _log("  - Cleaned meta.json: collapsed duplicate dependency keys.");
+                        break;
+                    case MetaJsonDeduplicator.DedupResult.ParseFailed:
+                        _log("  - Warning: could not re-parse meta.json to dedupe; left as-is.");
+                        break;
                 }
             }
 
