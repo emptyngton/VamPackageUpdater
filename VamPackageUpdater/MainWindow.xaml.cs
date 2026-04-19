@@ -32,6 +32,7 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<VoxtaResourceRef> _voxtaResources = new();
     private readonly PluginReferenceScanner _scanner = new();
     private readonly VoxtaResourceScanner _voxtaScanner = new();
+    private readonly VoxtaPngInspector _pngInspector = new();
     private readonly MetaReader _metaReader = new();
     private Paragraph _logParagraph = null!;
     private PluginCategory? _activeFilter;
@@ -374,6 +375,47 @@ public partial class MainWindow : Window
         {
             Log($"Not a valid PNG file: {Path.GetFileName(dialog.FileName)}", ErrorBrush);
             return;
+        }
+
+        // Verify the PNG actually contains the character (or scenario etc.) we're attaching it for.
+        // Voxta-exported PNGs embed the resource data in a tEXt chunk; we peek at it.
+        var verdict = _pngInspector.CheckMatch(dialog.FileName, r.Kind, r.Id, out var inspection);
+        switch (verdict)
+        {
+            case VoxtaPngInspector.MatchVerdict.KindMismatch:
+            {
+                var actual = inspection.EmbeddedKind?.ToLabel() ?? "unknown";
+                MessageBox.Show(this,
+                    $"This PNG contains a Voxta {actual}, but you're attaching it to a {r.KindLabel} slot.\n\n" +
+                    $"File:   {Path.GetFileName(dialog.FileName)}\n" +
+                    $"Expected kind: {r.KindLabel}\n" +
+                    $"Actual kind:   {actual}",
+                    "Wrong resource kind",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+                Log($"Refused attachment — kind mismatch ({actual} PNG for {r.KindLabel} slot): {Path.GetFileName(dialog.FileName)}", ErrorBrush);
+                return;
+            }
+            case VoxtaPngInspector.MatchVerdict.UuidMismatch:
+            {
+                var found = inspection.EmbeddedUuids.Count > 0 ? string.Join(", ", inspection.EmbeddedUuids) : "(none)";
+                MessageBox.Show(this,
+                    $"This PNG doesn't contain the {r.KindLabel} you expected.\n\n" +
+                    $"File:          {Path.GetFileName(dialog.FileName)}\n" +
+                    $"Expected UUID: {r.Id}\n" +
+                    $"PNG contains:  {found}\n\n" +
+                    "Pick the PNG exported from Voxta Studio that matches the UUID above.",
+                    "Wrong character",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+                Log($"Refused attachment — UUID mismatch (expected {r.Id}, PNG has {found}): {Path.GetFileName(dialog.FileName)}", ErrorBrush);
+                return;
+            }
+            case VoxtaPngInspector.MatchVerdict.NoVoxtaMetadata:
+                // Permissive: warn but allow. User might know something we don't.
+                Log($"Warning: '{Path.GetFileName(dialog.FileName)}' has no Voxta metadata chunk. Attaching anyway.", ErrorBrush);
+                break;
+            case VoxtaPngInspector.MatchVerdict.Match:
+                // Silent success
+                break;
         }
 
         var wasBundled = r.Status == VoxtaResourceStatus.Bundled || r.Status == VoxtaResourceStatus.Replacing;
