@@ -12,6 +12,8 @@ public enum VoxtaResourceStatus
     Missing,
     /// <summary>Missing, but user has selected a PNG to attach on the next apply.</summary>
     Attached,
+    /// <summary>Already bundled, and user has selected a new PNG that will overwrite the existing one on apply.</summary>
+    Replacing,
     /// <summary>Bundled in the .var but not referenced by any scene — probably leftover. Informational only.</summary>
     Orphan
 }
@@ -54,17 +56,32 @@ public sealed class VoxtaResourceRef : INotifyPropertyChanged
             _attachedSourcePath = value;
             OnPropertyChanged();
             OnPropertyChanged(nameof(AttachedFileName));
+            OnPropertyChanged(nameof(AttachedTooltip));
+            OnPropertyChanged(nameof(HasAttachment));
         }
     }
 
     public string? AttachedFileName =>
         string.IsNullOrEmpty(AttachedSourcePath) ? null : Path.GetFileName(AttachedSourcePath);
 
+    /// <summary>
+    /// Target path inside the .var where the attached PNG will be written.
+    /// Shown as a tooltip so the user can see the auto-rename is happening.
+    /// </summary>
+    public string TargetEmbedPath => Kind.BuildBundledPath(Id);
+
+    public string? AttachedTooltip => string.IsNullOrEmpty(AttachedSourcePath)
+        ? null
+        : $"Source:\n  {AttachedSourcePath}\n\nWill be embedded as:\n  {TargetEmbedPath}\n\n(Source filename doesn't matter — it's renamed to match the Voxta resource UUID.)";
+
+    public bool HasAttachment => !string.IsNullOrEmpty(AttachedSourcePath);
+
     public string StatusLabel => Status switch
     {
         VoxtaResourceStatus.Bundled => "Bundled",
         VoxtaResourceStatus.Missing => "Missing",
         VoxtaResourceStatus.Attached => "Attached",
+        VoxtaResourceStatus.Replacing => "Replacing",
         VoxtaResourceStatus.Orphan => "Orphan",
         _ => Status.ToString()
     };

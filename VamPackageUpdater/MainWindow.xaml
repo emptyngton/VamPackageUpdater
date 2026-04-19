@@ -590,6 +590,9 @@
                                                     <DataTrigger Binding="{Binding StatusLabel}" Value="Attached">
                                                         <Setter Property="Foreground" Value="#569CD6"/>
                                                     </DataTrigger>
+                                                    <DataTrigger Binding="{Binding StatusLabel}" Value="Replacing">
+                                                        <Setter Property="Foreground" Value="#D7BA7D"/>
+                                                    </DataTrigger>
                                                     <DataTrigger Binding="{Binding StatusLabel}" Value="Orphan">
                                                         <Setter Property="Foreground" Value="#808080"/>
                                                     </DataTrigger>
@@ -600,7 +603,7 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="Attach PNG" Width="240">
+                        <DataGridTemplateColumn Header="Attach PNG" Width="290">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <Grid Margin="4,3">
@@ -611,22 +614,34 @@
                                         </Grid.ColumnDefinitions>
                                         <TextBlock Grid.Column="0"
                                                    Text="{Binding AttachedFileName}"
+                                                   ToolTip="{Binding AttachedTooltip}"
                                                    Foreground="#569CD6"
                                                    FontFamily="Cascadia Mono, Consolas"
                                                    VerticalAlignment="Center"
                                                    TextTrimming="CharacterEllipsis"/>
-                                        <Button Grid.Column="1" Content="..."
+                                        <Button Grid.Column="1" Content="Browse..."
                                                 Click="AttachResourceButton_Click"
                                                 Tag="{Binding}"
                                                 Margin="4,0,0,0" Padding="8,2"
                                                 FontSize="11"
-                                                ToolTip="Select a PNG file exported from Voxta"/>
-                                        <Button Grid.Column="2" Content="x"
+                                                ToolTip="Pick any PNG exported from Voxta Studio — filename doesn't matter, it will be renamed to the Voxta resource UUID when embedded."/>
+                                        <Button Grid.Column="2" Content="Clear"
                                                 Click="DetachResourceButton_Click"
                                                 Tag="{Binding}"
-                                                Margin="4,0,0,0" Padding="6,2"
+                                                Margin="4,0,0,0" Padding="8,2"
                                                 FontSize="11"
-                                                ToolTip="Remove the staged attachment"/>
+                                                ToolTip="Remove the staged attachment">
+                                            <Button.Style>
+                                                <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding HasAttachment}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Button.Style>
+                                        </Button>
                                     </Grid>
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>

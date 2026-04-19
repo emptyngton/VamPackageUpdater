@@ -376,16 +376,20 @@ public partial class MainWindow : Window
             return;
         }
 
+        var wasBundled = r.Status == VoxtaResourceStatus.Bundled || r.Status == VoxtaResourceStatus.Replacing;
         r.AttachedSourcePath = dialog.FileName;
-        if (r.Status != VoxtaResourceStatus.Bundled) // keep Bundled visible even if user stages an override
-            r.Status = VoxtaResourceStatus.Attached;
+        r.Status = wasBundled ? VoxtaResourceStatus.Replacing : VoxtaResourceStatus.Attached;
 
+        var verb = wasBundled ? "Replacing" : "Attached";
         LogParts(
-            ("Attached ", HeaderBrush),
+            ($"{verb} ", HeaderBrush),
             ($"{r.KindLabel} ", PluginBrush),
             (r.NameOrId, VersionBrush),
             ("  <-  ", SubduedBrush),
             (Path.GetFileName(dialog.FileName), PathBrush));
+        LogParts(
+            ("   will embed as: ", SubduedBrush),
+            (r.TargetEmbedPath, PathBrush));
 
         UpdateSectionTabLabels();
     }
@@ -394,13 +398,7 @@ public partial class MainWindow : Window
     {
         if (sender is not Button btn || btn.Tag is not VoxtaResourceRef r) return;
         if (string.IsNullOrEmpty(r.AttachedSourcePath)) return;
-
-        r.AttachedSourcePath = null;
-        if (r.Status == VoxtaResourceStatus.Attached)
-            r.Status = string.IsNullOrEmpty(r.BundledPath)
-                ? VoxtaResourceStatus.Missing
-                : VoxtaResourceStatus.Bundled;
-
+        RevertAttachment(r);
         UpdateSectionTabLabels();
     }
 
@@ -408,14 +406,21 @@ public partial class MainWindow : Window
     {
         foreach (var r in _voxtaResources)
         {
-            if (string.IsNullOrEmpty(r.AttachedSourcePath)) continue;
-            r.AttachedSourcePath = null;
-            if (r.Status == VoxtaResourceStatus.Attached)
-                r.Status = string.IsNullOrEmpty(r.BundledPath)
-                    ? VoxtaResourceStatus.Missing
-                    : VoxtaResourceStatus.Bundled;
+            if (!string.IsNullOrEmpty(r.AttachedSourcePath))
+                RevertAttachment(r);
         }
         UpdateSectionTabLabels();
+    }
+
+    private static void RevertAttachment(VoxtaResourceRef r)
+    {
+        r.AttachedSourcePath = null;
+        if (r.Status is VoxtaResourceStatus.Attached or VoxtaResourceStatus.Replacing)
+        {
+            r.Status = string.IsNullOrEmpty(r.BundledPath)
+                ? VoxtaResourceStatus.Missing
+                : VoxtaResourceStatus.Bundled;
+        }
     }
 
     private static bool IsPngFile(string path)
