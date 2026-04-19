@@ -774,8 +774,9 @@
                                                         <Setter Property="ToolTip" Value="Not available on Hub — fetch this from the creator's Patreon/etc. manually."/>
                                                     </DataTrigger>
                                                     <DataTrigger Binding="{Binding StatusLabel}" Value="Wrong version">
-                                                        <Setter Property="Content" Value="Manual"/>
-                                                        <Setter Property="ToolTip" Value="Hub has a different version than the scene requires. Either grab the exact version manually or rewrite the ref to .latest in the Plugin references tab."/>
+                                                        <Setter Property="Content" Value="Install anyway"/>
+                                                        <Setter Property="IsEnabled" Value="True"/>
+                                                        <Setter Property="ToolTip" Value="Hub has a different version than the scene requires. Install it anyway (won't satisfy the scene's exact ref — confirms first)."/>
                                                     </DataTrigger>
                                                 </Style.Triggers>
                                             </Style>

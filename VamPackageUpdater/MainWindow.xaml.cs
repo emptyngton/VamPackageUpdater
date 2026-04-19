@@ -675,11 +675,30 @@ public partial class MainWindow : Window
         if (sender is not Button btn || btn.Tag is not HubDependency dep) return;
 
         // Branch by status. Installed / Downloaded → destructive Delete. Missing /
-        // UpdateAvailable / Error → install via Hub. Other states are presented as
-        // disabled buttons in the XAML, so they shouldn't fire the click event.
+        // UpdateAvailable / Error → install via Hub. VersionMismatch → confirm then
+        // install Hub's substitute version. Other states are presented as disabled
+        // buttons in the XAML, so they shouldn't fire the click event.
         if (dep.Status == HubDependencyStatus.Installed || dep.Status == HubDependencyStatus.Downloaded)
         {
             DeleteInstalledDep(dep);
+            return;
+        }
+
+        if (dep.Status == HubDependencyStatus.VersionMismatch)
+        {
+            var requested = dep.RequestedVersion?.ToString() ?? "?";
+            var hubHas = dep.HubLatestVersion?.ToString() ?? "?";
+            var confirm = MessageBox.Show(
+                this,
+                $"Scene asks for {dep.PackageBaseName} v{requested} exactly, but Hub only serves v{hubHas}.\n\n" +
+                $"Install v{hubHas} anyway?\n\n" +
+                $"Note: this won't satisfy the scene's v{requested} reference — VaM will still complain about the missing exact version. " +
+                $"To actually fix the scene, either grab v{requested} manually from the creator's Patreon, or rewrite the ref to .latest on the Plugin references tab.",
+                "Install anyway?",
+                MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+            if (confirm != MessageBoxResult.Yes) return;
+
+            await ForceInstallMismatchedDepAsync(dep);
             return;
         }
 
@@ -741,6 +760,65 @@ public partial class MainWindow : Window
                 ("...", SubduedBrush));
 
             await DownloadSingleDepAsync(dep, hub, addonPackagesFolder);
+            UpdateSectionTabLabels();
+        }
+        finally
+        {
+            DownloadAllMissingButton.IsEnabled = _hubDeps.Any(d =>
+                d.Status == HubDependencyStatus.Missing ||
+                d.Status == HubDependencyStatus.UpdateAvailable);
+            RescanButton.IsEnabled = true;
+            var hasPlugins = _plugins.Count > 0;
+            var hasVoxta = _voxtaResources.Count > 0;
+            UpdateButton.IsEnabled = hasPlugins || hasVoxta;
+        }
+    }
+
+    /// <summary>
+    /// Force-install a VersionMismatch dep: download whatever version Hub is serving
+    /// into AddonPackages, but KEEP the status as VersionMismatch afterward so the UI
+    /// stays honest about the scene's exact-version ref still being unsatisfied.
+    /// </summary>
+    private async Task ForceInstallMismatchedDepAsync(HubDependency dep)
+    {
+        var addonPackagesFolder = AddonPackagesIndex.InferAddonPackagesFolder(FilePathBox.Text);
+        if (string.IsNullOrEmpty(addonPackagesFolder) || !Directory.Exists(addonPackagesFolder))
+        {
+            Log("Could not determine the AddonPackages folder from the loaded .var path.", ErrorBrush);
+            return;
+        }
+
+        DownloadAllMissingButton.IsEnabled = false;
+        RescanButton.IsEnabled = false;
+        UpdateButton.IsEnabled = false;
+
+        try
+        {
+            using var hub = new HubClient();
+            LogParts(
+                ("Force-installing ", HeaderBrush),
+                (dep.PackageBaseName, PluginBrush),
+                (" v", SubduedBrush),
+                (dep.HubLatestVersion?.ToString() ?? "?", NumberBrush),
+                ($" (scene asks for v{dep.RequestedVersion?.ToString() ?? "?"})...", SubduedBrush));
+
+            var ok = await DownloadSingleDepAsync(dep, hub, addonPackagesFolder);
+
+            // Even on successful download, keep flagging as VersionMismatch so the user
+            // remembers the scene's exact-version ref still isn't satisfied.
+            if (ok)
+            {
+                dep.InstalledVersion = dep.HubLatestVersion;
+                dep.Status = HubDependencyStatus.VersionMismatch;
+                LogParts(
+                    ("     ", DefaultBrush),
+                    ("(scene still references v", SubduedBrush),
+                    (dep.RequestedVersion?.ToString() ?? "?", NumberBrush),
+                    (" — update the ref to .latest or grab v", SubduedBrush),
+                    (dep.RequestedVersion?.ToString() ?? "?", NumberBrush),
+                    (" manually to fully resolve)", SubduedBrush));
+            }
+
             UpdateSectionTabLabels();
         }
         finally
