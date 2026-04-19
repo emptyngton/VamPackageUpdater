@@ -11,8 +11,23 @@ namespace VamPackageUpdater.Services;
 /// </summary>
 public sealed class VoxtaResourceScanner
 {
+    // Matches fields in the Voxta plugin's own storable block, e.g.:
+    //   "Character ID" : "916a..."
+    //   "Character ID 2" : "..."
+    //   "Scenario ID" : "..."
     private static readonly Regex ResourceIdPattern = new(
         @"""(?<key>Character|Scenario|MemoryBook|Package)\s+ID\s*(?<idx>\d*)""\s*:\s*""(?<uuid>[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})""",
+        RegexOptions.Compiled);
+
+    // Matches VaM trigger actions that target the Voxta plugin, e.g. buttons that
+    // switch characters at runtime. Shape:
+    //   "receiver" : "plugin#3_Voxta",
+    //   "receiverTargetName" : "Character ID",
+    //   "stringChooserValue" : "916a..."
+    // The [^}]*? sections keep the match inside a single action object so we don't
+    // accidentally stitch fields across siblings.
+    private static readonly Regex VoxtaTriggerActionPattern = new(
+        @"""receiver""\s*:\s*""[^""]*Voxta[^""]*""[^}]*?""receiverTargetName""\s*:\s*""(?<key>Character|Scenario|MemoryBook|Package)\s+ID\s*(?<idx>\d*)""[^}]*?""stringChooserValue""\s*:\s*""(?<uuid>[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})""",
         RegexOptions.Compiled);
 
     private static readonly Regex ResourceNamePattern = new(
@@ -83,31 +98,17 @@ public sealed class VoxtaResourceScanner
                 if (!TryParseKindFromKeyword(im.Groups["key"].Value, out var kind)) continue;
                 var idx = im.Groups["idx"].Value;
                 var uuid = im.Groups["uuid"].Value.ToLowerInvariant();
-                var key = (kind, uuid);
+                RecordReference(referenced, kind, uuid, entry.FullName, idx, names);
+            }
 
-                if (!referenced.TryGetValue(key, out var rref))
-                {
-                    rref = new VoxtaResourceRef
-                    {
-                        Kind = kind,
-                        Id = uuid,
-                        SceneFile = entry.FullName
-                    };
-                    referenced[key] = rref;
-                }
-
-                if (rref.DisplayName is null)
-                {
-                    // Try exact idx first, then fall back to idx="1" when id idx=""
-                    // (VaM Voxta plugin names the primary character "Character Name 1" but
-                    //  the primary ID is just "Character ID" with no numeric suffix).
-                    if (names.TryGetValue((kind, idx), out var n))
-                        rref.DisplayName = n;
-                    else if (idx.Length == 0 && names.TryGetValue((kind, "1"), out var n1))
-                        rref.DisplayName = n1;
-                    else if (idx == "1" && names.TryGetValue((kind, ""), out var n0))
-                        rref.DisplayName = n0;
-                }
+            // Trigger actions (e.g. VaM buttons that switch character) that write
+            // to the Voxta plugin's Character ID / Scenario ID / etc.
+            foreach (Match am in VoxtaTriggerActionPattern.Matches(content))
+            {
+                if (!TryParseKindFromKeyword(am.Groups["key"].Value, out var kind)) continue;
+                var uuid = am.Groups["uuid"].Value.ToLowerInvariant();
+                // Trigger actions don't carry a paired "Name" field, so no name lookup.
+                RecordReference(referenced, kind, uuid, entry.FullName, idx: "", names: null);
             }
         }
 
@@ -143,6 +144,40 @@ public sealed class VoxtaResourceScanner
             .ThenBy(r => (int)r.Kind)
             .ThenBy(r => r.NameOrId, StringComparer.OrdinalIgnoreCase)
             .ToList();
+    }
+
+    private static void RecordReference(
+        Dictionary<(VoxtaResourceKind Kind, string Id), VoxtaResourceRef> referenced,
+        VoxtaResourceKind kind,
+        string uuid,
+        string sceneFile,
+        string idx,
+        Dictionary<(VoxtaResourceKind, string), string>? names)
+    {
+        var key = (kind, uuid);
+        if (!referenced.TryGetValue(key, out var rref))
+        {
+            rref = new VoxtaResourceRef
+            {
+                Kind = kind,
+                Id = uuid,
+                SceneFile = sceneFile
+            };
+            referenced[key] = rref;
+        }
+
+        if (rref.DisplayName is null && names is not null)
+        {
+            // Try exact idx first, then fall back to idx="1" when id idx=""
+            // (VaM Voxta plugin names the primary character "Character Name 1" but
+            //  the primary ID is just "Character ID" with no numeric suffix).
+            if (names.TryGetValue((kind, idx), out var n))
+                rref.DisplayName = n;
+            else if (idx.Length == 0 && names.TryGetValue((kind, "1"), out var n1))
+                rref.DisplayName = n1;
+            else if (idx == "1" && names.TryGetValue((kind, ""), out var n0))
+                rref.DisplayName = n0;
+        }
     }
 
     private static bool TryParseKindFromKeyword(string keyword, out VoxtaResourceKind kind)
