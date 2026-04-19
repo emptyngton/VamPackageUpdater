@@ -158,6 +158,17 @@ public sealed class AddonPackagesIndex
         depName.EndsWith(".latest", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
+    /// Parse the requested version from a dependency reference like "Author.Package.3" → 3.
+    /// Returns null for .latest / .min.N / malformed refs.
+    /// </summary>
+    public static int? ParseRequestedVersion(string depName)
+    {
+        if (TryParseDepName(depName, out _, out var v, out var isLatest, out var isMin) && !isLatest && !isMin)
+            return v;
+        return null;
+    }
+
+    /// <summary>
     /// Parse the version from a Hub-returned filename like "AcidBubbles.Timeline.291.var" → 291.
     /// Returns null if the name doesn't match the expected pattern.
     /// </summary>

@@ -662,13 +662,14 @@
                 </Grid.RowDefinitions>
 
                 <StackPanel Grid.Row="0" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,6,0,2">
-                    <Button Content="Download all missing" Click="DownloadAllMissingButton_Click"
-                            IsEnabled="False" x:Name="DownloadAllMissingButton" Padding="8,3"/>
+                    <Button Content="Download all" Click="DownloadAllMissingButton_Click"
+                            IsEnabled="False" x:Name="DownloadAllMissingButton" Padding="8,3"
+                            ToolTip="Download every 'Missing' and 'Update avail' package from hub.virtamate.com. Existing installed versions are left in place - VaM resolves .latest to the newest one present."/>
                 </StackPanel>
 
                 <TextBlock Grid.Row="1"
                            Foreground="#808080" FontSize="12" Margin="0,6,0,8" TextWrapping="Wrap"
-                           Text="Packages this .var depends on (from meta.json, transitive). Any row marked 'Missing' will be fetched from hub.virtamate.com when you click Download All. Paid / non-hub content can't be auto-downloaded — grab those manually from the creator's Patreon."/>
+                           Text="Packages this .var depends on (from meta.json, transitive). 'Download all' fetches 'Missing' and 'Update avail' rows from hub.virtamate.com. Paid / non-hub content can't be auto-downloaded — grab those manually from the creator's Patreon."/>
 
                 <DataGrid Grid.Row="2" x:Name="HubDepsGrid">
                     <DataGrid.Columns>
@@ -688,6 +689,9 @@
                                                             <Setter Property="Foreground" Value="#6A9955"/>
                                                         </DataTrigger>
                                                         <DataTrigger Binding="{Binding StatusLabel}" Value="Update avail">
+                                                            <Setter Property="Foreground" Value="#D7BA7D"/>
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding StatusLabel}" Value="Wrong version">
                                                             <Setter Property="Foreground" Value="#D7BA7D"/>
                                                         </DataTrigger>
                                                         <DataTrigger Binding="{Binding StatusLabel}" Value="Missing">

@@ -11,6 +11,11 @@ public enum HubDependencyStatus
     UpdateAvailable,
     /// <summary>Not present — will be queued for download.</summary>
     Missing,
+    /// <summary>
+    /// Scene asks for an exact version (e.g. .3) but Hub only serves a different version (e.g. .2).
+    /// Auto-download won't satisfy the reference; listed so the user knows to resolve it manually.
+    /// </summary>
+    VersionMismatch,
     /// <summary>Queued to download but not started yet.</summary>
     Queued,
     /// <summary>Downloading right now.</summary>
@@ -46,6 +51,9 @@ public sealed class HubDependency : INotifyPropertyChanged
     /// <summary>Newest version Hub reports for this package (null if Hub wasn't queried or has nothing).</summary>
     public int? HubLatestVersion { get; set; }
 
+    /// <summary>Version number the scene explicitly asks for (null for .latest refs or unparseable names).</summary>
+    public int? RequestedVersion { get; set; }
+
     private HubDependencyStatus _status;
     public HubDependencyStatus Status
     {
@@ -74,14 +82,15 @@ public sealed class HubDependency : INotifyPropertyChanged
 
     public string StatusLabel => Status switch
     {
-        HubDependencyStatus.Installed       => "Installed",
-        HubDependencyStatus.UpdateAvailable => "Update avail",
-        HubDependencyStatus.Missing         => "Missing",
-        HubDependencyStatus.Queued          => "Queued",
-        HubDependencyStatus.Downloading     => "Downloading",
-        HubDependencyStatus.Downloaded      => "Downloaded",
-        HubDependencyStatus.NotOnHub        => "Not on Hub",
-        HubDependencyStatus.Error           => "Error",
+        HubDependencyStatus.Installed        => "Installed",
+        HubDependencyStatus.UpdateAvailable  => "Update avail",
+        HubDependencyStatus.Missing          => "Missing",
+        HubDependencyStatus.VersionMismatch  => "Wrong version",
+        HubDependencyStatus.Queued           => "Queued",
+        HubDependencyStatus.Downloading      => "Downloading",
+        HubDependencyStatus.Downloaded       => "Downloaded",
+        HubDependencyStatus.NotOnHub         => "Not on Hub",
+        HubDependencyStatus.Error            => "Error",
         _ => Status.ToString()
     };
 
@@ -90,6 +99,8 @@ public sealed class HubDependency : INotifyPropertyChanged
     {
         HubDependencyStatus.UpdateAvailable when InstalledVersion.HasValue && HubLatestVersion.HasValue =>
             $"Installed: v{InstalledVersion} · Hub latest: v{HubLatestVersion}. Scene's .latest ref still resolves via the installed version, but Hub has a newer one.",
+        HubDependencyStatus.VersionMismatch when RequestedVersion.HasValue && HubLatestVersion.HasValue =>
+            $"Scene asks for v{RequestedVersion} exactly, but Hub only serves v{HubLatestVersion}. Auto-downloading won't satisfy this reference — grab v{RequestedVersion} from the creator's Patreon, or change the ref to .latest in the Plugin references tab.",
         HubDependencyStatus.NotOnHub =>
             "Hub has no download URL for this package — it's paid-only, has been removed, or was never uploaded to Hub. Grab it manually from the creator's Patreon/etc.",
         HubDependencyStatus.Error => ErrorMessage,
