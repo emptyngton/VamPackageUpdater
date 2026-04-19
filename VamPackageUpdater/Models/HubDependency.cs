@@ -109,6 +109,15 @@ public sealed class HubDependency : INotifyPropertyChanged
 
     public string LicenseLabel => string.IsNullOrWhiteSpace(License) ? "" : License;
 
+    /// <summary>"Author.Package" portion of the ref, without the version suffix.</summary>
+    public string PackageBaseName => Services.AddonPackagesIndex.SplitNameParts(Name).PackageBase;
+
+    /// <summary>"latest" / "3" / "min.5" — the version the scene is requesting.</summary>
+    public string RequestedVersionLabel => Services.AddonPackagesIndex.SplitNameParts(Name).VersionLabel;
+
+    /// <summary>Version number Hub serves for this package, as a display string. "—" when unknown.</summary>
+    public string HubLatestVersionLabel => HubLatestVersion?.ToString() ?? "—";
+
     public event PropertyChangedEventHandler? PropertyChanged;
     private void OnPropertyChanged([CallerMemberName] string? name = null) =>
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));

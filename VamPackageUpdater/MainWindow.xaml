@@ -673,7 +673,11 @@
 
                 <DataGrid Grid.Row="2" x:Name="HubDepsGrid">
                     <DataGrid.Columns>
-                        <DataGridTextColumn Header="Package" Binding="{Binding Name}" IsReadOnly="True" Width="3*"/>
+                        <DataGridTextColumn Header="Package" Binding="{Binding PackageBaseName}" IsReadOnly="True" Width="3*"/>
+                        <DataGridTextColumn Header="Version" Binding="{Binding RequestedVersionLabel}" IsReadOnly="True" Width="70"
+                                            FontFamily="Cascadia Mono, Consolas"/>
+                        <DataGridTextColumn Header="Hub latest" Binding="{Binding HubLatestVersionLabel}" IsReadOnly="True" Width="80"
+                                            FontFamily="Cascadia Mono, Consolas"/>
                         <DataGridTextColumn Header="License" Binding="{Binding LicenseLabel}" IsReadOnly="True" Width="100"/>
                         <DataGridTemplateColumn Header="Status" Width="140">
                             <DataGridTemplateColumn.CellTemplate>

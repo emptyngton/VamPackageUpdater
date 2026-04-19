@@ -169,6 +169,24 @@ public sealed class AddonPackagesIndex
     }
 
     /// <summary>
+    /// Split a dep reference into its package-base and version-label parts.
+    /// Example: "AcidBubbles.Timeline.latest" → ("AcidBubbles.Timeline", "latest").
+    /// Example: "SPQR.Footsteps.3"            → ("SPQR.Footsteps", "3").
+    /// Example: "Author.Package.min.5"        → ("Author.Package", "min.5").
+    /// Falls back to (name, "") for names we can't parse.
+    /// </summary>
+    public static (string PackageBase, string VersionLabel) SplitNameParts(string depName)
+    {
+        if (!TryParseDepName(depName, out var pkgKey, out var version, out var isLatest, out var isMin))
+            return (depName, "");
+
+        var label = isLatest ? "latest"
+            : isMin ? $"min.{version}"
+            : version.ToString();
+        return (pkgKey, label);
+    }
+
+    /// <summary>
     /// Parse the version from a Hub-returned filename like "AcidBubbles.Timeline.291.var" → 291.
     /// Returns null if the name doesn't match the expected pattern.
     /// </summary>
