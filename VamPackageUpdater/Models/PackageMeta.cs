@@ -7,6 +7,7 @@ public sealed record PackageMeta
     public string? LicenseType { get; init; }
     public string? Description { get; init; }
     public string? Credits { get; init; }
+    public string? PromotionalLink { get; init; }
     public string? ProgramVersion { get; init; }
     public long FileSize { get; init; }
     public int FileCount { get; init; }
