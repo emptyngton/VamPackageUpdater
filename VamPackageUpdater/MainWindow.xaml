@@ -575,7 +575,9 @@
                 <DataGrid Grid.Row="2" x:Name="VoxtaGrid">
                     <DataGrid.Columns>
                         <DataGridTextColumn Header="Kind" Binding="{Binding KindLabel}" IsReadOnly="True" Width="110"/>
-                        <DataGridTextColumn Header="Name / UUID" Binding="{Binding NameOrId}" IsReadOnly="True" Width="2*"/>
+                        <DataGridTextColumn Header="Name" Binding="{Binding DisplayName}" IsReadOnly="True" Width="*"/>
+                        <DataGridTextColumn Header="UUID" Binding="{Binding Id}" IsReadOnly="True" Width="280"
+                                            FontFamily="Cascadia Mono, Consolas"/>
                         <DataGridTemplateColumn Header="Status" Width="110">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>

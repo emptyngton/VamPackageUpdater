@@ -1,6 +1,8 @@
 using System.Buffers.Binary;
 using System.IO;
+using System.IO.Compression;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using VamPackageUpdater.Models;
 
@@ -106,6 +108,122 @@ public sealed class VoxtaPngInspector
         return result.EmbeddedUuids.Contains(target, StringComparer.Ordinal)
             ? MatchVerdict.Match
             : MatchVerdict.UuidMismatch;
+    }
+
+    // Top-level property keys we'll accept as the resource's display name.
+    // Voxta's export uses "Name" (capital N); we accept lowercase for robustness.
+    private static readonly string[] NamePropertyKeys = { "Name", "name" };
+
+    /// <summary>
+    /// Attempt to extract a friendly "Name" string from a Voxta-exported PNG. The
+    /// voxta_* tEXt chunk is base64-encoded; for a single-resource export the
+    /// payload is raw JSON, for a multi-resource Package export it's a VOXPKG zip.
+    /// Handles both shapes. Returns null if the PNG has no Voxta chunk or nothing
+    /// parses.
+    /// </summary>
+    public static string? TryReadResourceName(Stream pngStream)
+    {
+        try
+        {
+            Span<byte> sig = stackalloc byte[8];
+            if (pngStream.Read(sig) != 8 || !sig.SequenceEqual(PngSignature))
+                return null;
+
+            while (TryReadChunk(pngStream, out var type, out var data))
+            {
+                if (type == "IEND") break;
+                if (type != "tEXt") continue;
+
+                var (keyword, text) = DecodeTextChunk(data);
+                if (!KindByKeyword.ContainsKey(keyword)) continue;
+
+                byte[] decoded;
+                try { decoded = Convert.FromBase64String(text); }
+                catch (FormatException) { return null; }
+
+                // Shape 1: raw JSON (single-resource exports). Detect by '{' or '[' first byte.
+                if (decoded.Length > 0 && (decoded[0] == '{' || decoded[0] == '['))
+                    return TryReadNameFromJsonBytes(decoded);
+
+                // Shape 2: VOXPKG zip (multi-resource Package export). Detect by "PK\x03\x04" header.
+                if (decoded.Length >= 4 && decoded[0] == 'P' && decoded[1] == 'K' && decoded[2] == 0x03 && decoded[3] == 0x04)
+                    return TryReadNameFromVoxpkg(decoded);
+
+                return null;
+            }
+        }
+        catch (IOException) { }
+        catch (InvalidDataException) { }
+        return null;
+    }
+
+    private static string? TryReadNameFromJsonBytes(byte[] jsonBytes)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(jsonBytes);
+            return FindNameProperty(doc.RootElement);
+        }
+        catch (JsonException) { return null; }
+    }
+
+    private static string? TryReadNameFromVoxpkg(byte[] voxpkgBytes)
+    {
+        try
+        {
+            using var ms = new MemoryStream(voxpkgBytes);
+            using var zip = new ZipArchive(ms, ZipArchiveMode.Read);
+            foreach (var entry in zip.Entries)
+            {
+                if (!entry.Name.EndsWith(".json", StringComparison.OrdinalIgnoreCase)) continue;
+                string json;
+                try
+                {
+                    using var es = entry.Open();
+                    using var reader = new StreamReader(es);
+                    json = reader.ReadToEnd();
+                }
+                catch (InvalidDataException) { continue; }
+                catch (IOException) { continue; }
+
+                string? found;
+                try { found = FindNameProperty(JsonDocument.Parse(json).RootElement); }
+                catch (JsonException) { continue; }
+                if (!string.IsNullOrWhiteSpace(found)) return found;
+            }
+        }
+        catch (InvalidDataException) { return null; }
+        return null;
+    }
+
+    private static string? FindNameProperty(JsonElement el)
+    {
+        if (el.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var key in NamePropertyKeys)
+            {
+                if (el.TryGetProperty(key, out var nameEl) && nameEl.ValueKind == JsonValueKind.String)
+                {
+                    var n = nameEl.GetString();
+                    if (!string.IsNullOrWhiteSpace(n)) return n;
+                }
+            }
+            // Walk nested if nothing at this level.
+            foreach (var prop in el.EnumerateObject())
+            {
+                var nested = FindNameProperty(prop.Value);
+                if (!string.IsNullOrWhiteSpace(nested)) return nested;
+            }
+        }
+        else if (el.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in el.EnumerateArray())
+            {
+                var nested = FindNameProperty(item);
+                if (!string.IsNullOrWhiteSpace(nested)) return nested;
+            }
+        }
+        return null;
     }
 
     private static bool TryReadChunk(Stream stream, out string type, out byte[] data)

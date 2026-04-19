@@ -139,6 +139,30 @@ public sealed class VoxtaResourceScanner
             };
         }
 
+        // Backfill DisplayName from the bundled PNG's embedded Voxta metadata for any
+        // resource the scene-JSON pairing didn't name (e.g. characters only referenced
+        // via a VaM button trigger, which carries a UUID but no name field).
+        foreach (var kv in referenced)
+        {
+            var rref = kv.Value;
+            if (!string.IsNullOrWhiteSpace(rref.DisplayName)) continue;
+            if (string.IsNullOrEmpty(rref.BundledPath)) continue;
+
+            ct.ThrowIfCancellationRequested();
+            var entry = archive.GetEntry(rref.BundledPath);
+            if (entry is null) continue;
+
+            try
+            {
+                using var es = entry.Open();
+                var name = VoxtaPngInspector.TryReadResourceName(es);
+                if (!string.IsNullOrWhiteSpace(name))
+                    rref.DisplayName = name;
+            }
+            catch (InvalidDataException) { /* skip — malformed PNG */ }
+            catch (IOException)          { /* skip — couldn't read entry */ }
+        }
+
         return referenced.Values
             .OrderBy(r => r.Status) // Missing first (lowest enum), then Bundled, then Orphan
             .ThenBy(r => (int)r.Kind)
