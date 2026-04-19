@@ -30,9 +30,11 @@ public partial class MainWindow : Window
 
     private readonly ObservableCollection<PluginReferenceGroup> _plugins = new();
     private readonly ObservableCollection<VoxtaResourceRef> _voxtaResources = new();
+    private readonly ObservableCollection<HubDependency> _hubDeps = new();
     private readonly PluginReferenceScanner _scanner = new();
     private readonly VoxtaResourceScanner _voxtaScanner = new();
     private readonly VoxtaPngInspector _pngInspector = new();
+    private readonly MetaJsonDependencyScanner _depScanner = new();
     private readonly MetaReader _metaReader = new();
     private Paragraph _logParagraph = null!;
     private PluginCategory? _activeFilter;
@@ -51,6 +53,7 @@ public partial class MainWindow : Window
         PluginsGrid.ItemsSource = _pluginsView;
 
         VoxtaGrid.ItemsSource = _voxtaResources;
+        HubDepsGrid.ItemsSource = _hubDeps;
 
         InitLogDocument();
     }
@@ -188,20 +191,24 @@ public partial class MainWindow : Window
 
         _plugins.Clear();
         _voxtaResources.Clear();
+        _hubDeps.Clear();
         RescanButton.IsEnabled = false;
         UpdateButton.IsEnabled = false;
         SetAllLatestButton.IsEnabled = false;
         ClearAllButton.IsEnabled = false;
         ClearAllAttachmentsButton.IsEnabled = false;
+        DownloadAllMissingButton.IsEnabled = false;
         LogParts(("Scanning ", SubduedBrush), ($"'{Path.GetFileName(FilePathBox.Text)}'", PathBrush), ("...", SubduedBrush));
 
         try
         {
             var metaTask = _metaReader.ReadAsync(FilePathBox.Text);
             var voxtaTask = _voxtaScanner.ScanAsync(FilePathBox.Text);
+            var depsTask = _depScanner.ScanAsync(FilePathBox.Text);
             var results = await _scanner.ScanAsync(FilePathBox.Text);
             var meta = await metaTask;
             var voxtaResults = await voxtaTask;
+            var depResults = await depsTask;
             ShowMetaPanel(meta);
 
             foreach (var g in results)
@@ -209,23 +216,46 @@ public partial class MainWindow : Window
             foreach (var r in voxtaResults)
                 _voxtaResources.Add(r);
 
+            // Check which deps are already in the user's AddonPackages folder.
+            var addonPackagesFolder = AddonPackagesIndex.InferAddonPackagesFolder(FilePathBox.Text);
+            if (!string.IsNullOrEmpty(addonPackagesFolder))
+            {
+                var index = await Task.Run(() => new AddonPackagesIndex(addonPackagesFolder));
+                index.AnnotateStatus(depResults);
+            }
+
+            // Ask the Hub upfront about availability for each dep:
+            //   - Non-installed → classify Missing vs NotOnHub based on Hub response
+            //   - .latest + installed → flag UpdateAvailable if Hub's latest version > installed version
+            await AnnotateWithHubAsync(depResults);
+
+            foreach (var d in depResults)
+                _hubDeps.Add(d);
+
             LogPluginScanResults();
             LogVoxtaScanResults();
+            LogHubDepsScanResults();
 
             var hasPlugins = _plugins.Count > 0;
             var hasVoxta = _voxtaResources.Count > 0;
+            var hasActionableDeps = _hubDeps.Any(d =>
+                d.Status == HubDependencyStatus.Missing ||
+                d.Status == HubDependencyStatus.UpdateAvailable);
 
             UpdateButton.IsEnabled = hasPlugins || hasVoxta;
             SetAllLatestButton.IsEnabled = hasPlugins;
             ClearAllButton.IsEnabled = hasPlugins;
             ClearAllAttachmentsButton.IsEnabled = hasVoxta;
+            DownloadAllMissingButton.IsEnabled = hasActionableDeps;
             RescanButton.IsEnabled = true;
             UpdateTabCounts();
             UpdateSectionTabLabels();
 
-            // Auto-jump to Voxta tab if there are missing resources — they're the actionable ones.
+            // Auto-jump priority: Missing Voxta resources > actionable hub deps.
             if (_voxtaResources.Any(r => r.Status == VoxtaResourceStatus.Missing))
                 SwitchSection("Voxta");
+            else if (hasActionableDeps)
+                SwitchSection("HubDeps");
         }
         catch (Exception ex)
         {
@@ -329,6 +359,563 @@ public partial class MainWindow : Window
         }
     }
 
+    private async Task AnnotateWithHubAsync(IList<HubDependency> deps)
+    {
+        // Deps to query:
+        //   - anything Missing (classify: Missing-downloadable vs NotOnHub)
+        //   - .latest refs that are Installed (check for newer version on Hub)
+        var toQuery = deps
+            .Where(d =>
+                d.Status == HubDependencyStatus.Missing ||
+                (d.Status == HubDependencyStatus.Installed && AddonPackagesIndex.IsLatestRef(d.Name)))
+            .ToList();
+
+        if (toQuery.Count == 0) return;
+
+        Dictionary<string, HubPackageInfo> lookup;
+        try
+        {
+            using var hub = new HubClient();
+            lookup = await hub.FindPackagesAsync(toQuery.Select(d => d.Name));
+        }
+        catch (Exception ex)
+        {
+            Log($"Warning: Hub availability check failed ({ex.Message}). 'Not on Hub' / 'Update avail' statuses are unknown until you can reach the Hub.", ErrorBrush);
+            return;
+        }
+
+        foreach (var dep in toQuery)
+        {
+            // Record what the scene asks for, so the UI can show both sides on mismatch.
+            dep.RequestedVersion = AddonPackagesIndex.ParseRequestedVersion(dep.Name);
+
+            if (!lookup.TryGetValue(dep.Name, out var info) || !info.HasUsableDownloadUrl)
+            {
+                // Hub won't serve this. Only mark NotOnHub if not locally installed —
+                // an installed package we can't verify on Hub is still fine to use.
+                if (dep.Status == HubDependencyStatus.Missing)
+                    dep.Status = HubDependencyStatus.NotOnHub;
+                continue;
+            }
+
+            // Cache Hub's resolved download info so DownloadAll doesn't re-query.
+            dep.ResolvedFilename = info.Filename;
+            dep.DownloadUrl = info.DownloadUrl;
+
+            var hubVersion = AddonPackagesIndex.ParseVersionFromFilename(info.Filename);
+            dep.HubLatestVersion = hubVersion;
+
+            // Exact-version ref that Hub substitutes with a different version (e.g. scene
+            // wants SPQR.Footsteps.3 but Hub only has .2). Silently downloading .2 wouldn't
+            // satisfy VaM's .3 ref — flag it so the user can resolve manually instead.
+            if (dep.Status == HubDependencyStatus.Missing &&
+                dep.RequestedVersion is int requestedV &&
+                hubVersion is int hubSubV &&
+                hubSubV != requestedV)
+            {
+                dep.Status = HubDependencyStatus.VersionMismatch;
+                continue;
+            }
+
+            if (dep.Status == HubDependencyStatus.Installed &&
+                AddonPackagesIndex.IsLatestRef(dep.Name) &&
+                dep.InstalledVersion is int installedV &&
+                hubVersion is int hubV &&
+                hubV > installedV)
+            {
+                dep.Status = HubDependencyStatus.UpdateAvailable;
+            }
+        }
+    }
+
+    private void LogHubDepsScanResults()
+    {
+        if (_hubDeps.Count == 0) return;
+
+        var installed = _hubDeps.Count(d => d.Status == HubDependencyStatus.Installed);
+        var missing = _hubDeps.Count(d => d.Status == HubDependencyStatus.Missing);
+        var notOnHub = _hubDeps.Count(d => d.Status == HubDependencyStatus.NotOnHub);
+        var updatable = _hubDeps.Count(d => d.Status == HubDependencyStatus.UpdateAvailable);
+        var mismatched = _hubDeps.Count(d => d.Status == HubDependencyStatus.VersionMismatch);
+        var total = _hubDeps.Count;
+
+        Log("");
+        LogParts(
+            ("Hub dependencies: ", HeaderBrush),
+            (installed.ToString(), NumberBrush),
+            (" installed, ", HeaderBrush),
+            (missing.ToString(), missing > 0 ? ErrorBrush : NumberBrush),
+            (" missing, ", HeaderBrush),
+            (notOnHub.ToString(), notOnHub > 0 ? ErrorBrush : NumberBrush),
+            (" not on Hub, ", HeaderBrush),
+            (mismatched.ToString(), mismatched > 0 ? LineBrush : NumberBrush),
+            (" wrong version, ", HeaderBrush),
+            (updatable.ToString(), updatable > 0 ? LineBrush : NumberBrush),
+            (" update available (of ", HeaderBrush),
+            (total.ToString(), NumberBrush),
+            (" total).", HeaderBrush));
+
+        if (missing > 0)
+        {
+            Log("");
+            Log("Open the 'Download deps' tab and click 'Download all' to fetch them from hub.virtamate.com.", SubduedBrush);
+        }
+        if (notOnHub > 0)
+        {
+            Log("Some packages aren't on the Hub and must be fetched manually from their creator (Patreon, etc.).", SubduedBrush);
+        }
+        if (mismatched > 0)
+        {
+            foreach (var d in _hubDeps.Where(d => d.Status == HubDependencyStatus.VersionMismatch))
+            {
+                LogParts(
+                    ("  Wrong version: ", ErrorBrush),
+                    (d.Name, PluginBrush),
+                    (" — Hub only has v", SubduedBrush),
+                    (d.HubLatestVersion?.ToString() ?? "?", NumberBrush));
+            }
+            Log("Scene asks for specific versions that Hub doesn't serve. Either grab the exact version from the creator's Patreon, or use the Plugin references tab to rewrite those refs to .latest.", SubduedBrush);
+        }
+    }
+
+    private async void DownloadAllMissingButton_Click(object sender, RoutedEventArgs e)
+    {
+        // "Download all" handles both Missing (never-installed) and UpdateAvailable
+        // (installed but .latest resolves to a newer version on Hub). Both get fetched
+        // into AddonPackages; VaM's .latest resolver picks the newest version present.
+        var missing = _hubDeps
+            .Where(d => d.Status == HubDependencyStatus.Missing || d.Status == HubDependencyStatus.UpdateAvailable)
+            .ToList();
+        if (missing.Count == 0) return;
+
+        var updatingCount = missing.Count(d => d.Status == HubDependencyStatus.UpdateAvailable);
+        var missingCount = missing.Count - updatingCount;
+
+        var addonPackagesFolder = AddonPackagesIndex.InferAddonPackagesFolder(FilePathBox.Text);
+        if (string.IsNullOrEmpty(addonPackagesFolder) || !Directory.Exists(addonPackagesFolder))
+        {
+            Log("Could not determine the AddonPackages folder from the loaded .var path.", ErrorBrush);
+            return;
+        }
+
+        DownloadAllMissingButton.IsEnabled = false;
+        RescanButton.IsEnabled = false;
+        UpdateButton.IsEnabled = false;
+
+        try
+        {
+            foreach (var dep in missing)
+                dep.Status = HubDependencyStatus.Queued;
+
+            if (updatingCount > 0 && missingCount > 0)
+                LogParts(
+                    ("Querying Hub for ", HeaderBrush),
+                    (missingCount.ToString(), NumberBrush),
+                    (" missing + ", HeaderBrush),
+                    (updatingCount.ToString(), NumberBrush),
+                    (" outdated package(s)...", HeaderBrush));
+            else if (updatingCount > 0)
+                LogParts(
+                    ("Querying Hub for ", HeaderBrush),
+                    (updatingCount.ToString(), NumberBrush),
+                    (" outdated package(s)...", HeaderBrush));
+            else
+                LogParts(
+                    ("Querying Hub for ", HeaderBrush),
+                    (missingCount.ToString(), NumberBrush),
+                    (" missing package(s)...", HeaderBrush));
+
+            using var hub = new HubClient();
+            Dictionary<string, HubPackageInfo> lookup;
+            try
+            {
+                lookup = await hub.FindPackagesAsync(missing.Select(d => d.Name));
+            }
+            catch (Exception ex)
+            {
+                Log($"Hub query failed: {ex.Message}", ErrorBrush);
+                foreach (var dep in missing)
+                {
+                    dep.Status = HubDependencyStatus.Error;
+                    dep.ErrorMessage = "Hub query failed";
+                }
+                return;
+            }
+
+            // Some packages get a "...?file=" truncated URL back and need a second query —
+            // VamToolbox's workaround.
+            var needsRetry = missing
+                .Where(d =>
+                    lookup.TryGetValue(d.Name, out var info) &&
+                    !string.IsNullOrEmpty(info.DownloadUrl) &&
+                    info.DownloadUrl!.EndsWith("?file=", StringComparison.OrdinalIgnoreCase))
+                .Select(d => d.Name)
+                .ToList();
+            if (needsRetry.Count > 0)
+            {
+                try
+                {
+                    var retry = await hub.FindPackagesAsync(needsRetry);
+                    foreach (var kv in retry)
+                        lookup[kv.Key] = kv.Value;
+                }
+                catch { /* best-effort retry */ }
+            }
+
+            var downloaded = 0;
+            var skipped = 0;
+            foreach (var dep in missing)
+            {
+                if (!lookup.TryGetValue(dep.Name, out var info) || !info.HasUsableDownloadUrl)
+                {
+                    dep.Status = HubDependencyStatus.NotOnHub;
+                    dep.ErrorMessage = "Hub returned no download URL (package is paid-only, removed, or never uploaded to Hub).";
+                    LogParts(
+                        ("  - ", DefaultBrush),
+                        ("[Not on Hub] ", ErrorBrush),
+                        (dep.Name, PluginBrush));
+                    skipped++;
+                    continue;
+                }
+
+                dep.ResolvedFilename = info.Filename;
+                dep.DownloadUrl = info.DownloadUrl;
+                var ok = await DownloadSingleDepAsync(dep, hub, addonPackagesFolder);
+                if (ok) downloaded++; else skipped++;
+            }
+
+            Log("");
+            LogParts(
+                ("Done. Downloaded ", HeaderBrush),
+                (downloaded.ToString(), NumberBrush),
+                (skipped > 0 ? $", skipped {skipped} (paid/removed/error)." : ".", HeaderBrush));
+
+            UpdateSectionTabLabels();
+        }
+        finally
+        {
+            DownloadAllMissingButton.IsEnabled = _hubDeps.Any(d =>
+                d.Status == HubDependencyStatus.Missing ||
+                d.Status == HubDependencyStatus.UpdateAvailable);
+            RescanButton.IsEnabled = true;
+            var hasPlugins = _plugins.Count > 0;
+            var hasVoxta = _voxtaResources.Count > 0;
+            UpdateButton.IsEnabled = hasPlugins || hasVoxta;
+        }
+    }
+
+    /// <summary>
+    /// Download a single dep using its already-resolved DownloadUrl + ResolvedFilename.
+    /// Handles the existing-file short-circuit, logs transitions, updates Status/ErrorMessage.
+    /// Returns true if the file ended up present in AddonPackages (fresh download or already there).
+    /// </summary>
+    private async Task<bool> DownloadSingleDepAsync(HubDependency dep, HubClient hub, string addonPackagesFolder)
+    {
+        if (string.IsNullOrEmpty(dep.DownloadUrl) || string.IsNullOrEmpty(dep.ResolvedFilename))
+        {
+            dep.Status = HubDependencyStatus.Error;
+            dep.ErrorMessage = "No resolved Hub download info — run Rescan first.";
+            LogParts(
+                ("  - ", DefaultBrush),
+                ("[No Hub info] ", ErrorBrush),
+                (dep.Name, PluginBrush));
+            return false;
+        }
+
+        var destination = Path.Combine(addonPackagesFolder, dep.ResolvedFilename);
+        if (File.Exists(destination))
+        {
+            dep.InstalledPath = destination;
+            dep.Status = HubDependencyStatus.Installed;
+            LogParts(
+                ("  - ", DefaultBrush),
+                ("[Already present] ", SuccessBrush),
+                (dep.ResolvedFilename, PluginBrush));
+            return true;
+        }
+
+        dep.Status = HubDependencyStatus.Downloading;
+        LogParts(
+            ("  - ", DefaultBrush),
+            ("Downloading ", HeaderBrush),
+            (dep.ResolvedFilename, PathBrush),
+            ("...", SubduedBrush));
+
+        HubDownloadResult result;
+        try
+        {
+            result = await hub.DownloadAsync(dep.DownloadUrl, destination);
+        }
+        catch (Exception ex)
+        {
+            result = HubDownloadResult.Fail(ex.Message);
+        }
+
+        if (result.Success)
+        {
+            dep.InstalledPath = destination;
+            dep.Status = HubDependencyStatus.Downloaded;
+            LogParts(
+                ("     ", DefaultBrush),
+                ($"-> {FormatBytes(result.Bytes)}", SubduedBrush));
+            return true;
+        }
+
+        dep.Status = HubDependencyStatus.Error;
+        dep.ErrorMessage = result.Error;
+        LogParts(
+            ("     ", DefaultBrush),
+            ("-> Error: ", ErrorBrush),
+            (result.Error ?? "unknown", ErrorBrush));
+        return false;
+    }
+
+    private async void DepActionButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button btn || btn.Tag is not HubDependency dep) return;
+
+        // Branch by status. Installed / Downloaded → destructive Delete. Missing /
+        // UpdateAvailable / Error → install via Hub. VersionMismatch → confirm then
+        // install Hub's substitute version. Other states are presented as disabled
+        // buttons in the XAML, so they shouldn't fire the click event.
+        if (dep.Status == HubDependencyStatus.Installed || dep.Status == HubDependencyStatus.Downloaded)
+        {
+            DeleteInstalledDep(dep);
+            return;
+        }
+
+        if (dep.Status == HubDependencyStatus.VersionMismatch)
+        {
+            // If the mismatched file is already force-installed on disk, the action
+            // is Delete — remove the substitute .var. Otherwise the action is the
+            // force-install confirm dialog below.
+            if (dep.HasLocalFile)
+            {
+                DeleteInstalledDep(dep);
+                return;
+            }
+
+            var requested = dep.RequestedVersion?.ToString() ?? "?";
+            var hubHas = dep.HubLatestVersion?.ToString() ?? "?";
+            var confirm = MessageBox.Show(
+                this,
+                $"Scene asks for {dep.PackageBaseName} v{requested} exactly, but Hub only serves v{hubHas}.\n\n" +
+                $"Install v{hubHas} anyway?\n\n" +
+                $"Note: this won't satisfy the scene's v{requested} reference — VaM will still complain about the missing exact version. " +
+                $"To actually fix the scene, either grab v{requested} manually from the creator's Patreon, or rewrite the ref to .latest on the Plugin references tab.",
+                "Install anyway?",
+                MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+            if (confirm != MessageBoxResult.Yes) return;
+
+            await ForceInstallMismatchedDepAsync(dep);
+            return;
+        }
+
+        if (dep.Status != HubDependencyStatus.Missing &&
+            dep.Status != HubDependencyStatus.UpdateAvailable &&
+            dep.Status != HubDependencyStatus.Error)
+            return;
+
+        var addonPackagesFolder = AddonPackagesIndex.InferAddonPackagesFolder(FilePathBox.Text);
+        if (string.IsNullOrEmpty(addonPackagesFolder) || !Directory.Exists(addonPackagesFolder))
+        {
+            Log("Could not determine the AddonPackages folder from the loaded .var path.", ErrorBrush);
+            return;
+        }
+
+        DownloadAllMissingButton.IsEnabled = false;
+        RescanButton.IsEnabled = false;
+        UpdateButton.IsEnabled = false;
+
+        try
+        {
+            using var hub = new HubClient();
+
+            // If scan already cached DownloadUrl we reuse it. Otherwise (user clicked Retry
+            // on an Error row, or cache got cleared somehow) query Hub for just this one.
+            if (string.IsNullOrEmpty(dep.DownloadUrl) || string.IsNullOrEmpty(dep.ResolvedFilename))
+            {
+                try
+                {
+                    var lookup = await hub.FindPackagesAsync(new[] { dep.Name });
+                    if (lookup.TryGetValue(dep.Name, out var info) && info.HasUsableDownloadUrl)
+                    {
+                        dep.ResolvedFilename = info.Filename;
+                        dep.DownloadUrl = info.DownloadUrl;
+                    }
+                    else
+                    {
+                        dep.Status = HubDependencyStatus.NotOnHub;
+                        dep.ErrorMessage = "Hub returned no download URL (paid-only/removed/never uploaded).";
+                        LogParts(
+                            ("  - ", DefaultBrush),
+                            ("[Not on Hub] ", ErrorBrush),
+                            (dep.Name, PluginBrush));
+                        return;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    dep.Status = HubDependencyStatus.Error;
+                    dep.ErrorMessage = ex.Message;
+                    Log($"Hub query failed for {dep.Name}: {ex.Message}", ErrorBrush);
+                    return;
+                }
+            }
+
+            LogParts(
+                ("Installing ", HeaderBrush),
+                (dep.Name, PluginBrush),
+                ("...", SubduedBrush));
+
+            await DownloadSingleDepAsync(dep, hub, addonPackagesFolder);
+            UpdateSectionTabLabels();
+        }
+        finally
+        {
+            DownloadAllMissingButton.IsEnabled = _hubDeps.Any(d =>
+                d.Status == HubDependencyStatus.Missing ||
+                d.Status == HubDependencyStatus.UpdateAvailable);
+            RescanButton.IsEnabled = true;
+            var hasPlugins = _plugins.Count > 0;
+            var hasVoxta = _voxtaResources.Count > 0;
+            UpdateButton.IsEnabled = hasPlugins || hasVoxta;
+        }
+    }
+
+    /// <summary>
+    /// Force-install a VersionMismatch dep: download whatever version Hub is serving
+    /// into AddonPackages, but KEEP the status as VersionMismatch afterward so the UI
+    /// stays honest about the scene's exact-version ref still being unsatisfied.
+    /// </summary>
+    private async Task ForceInstallMismatchedDepAsync(HubDependency dep)
+    {
+        var addonPackagesFolder = AddonPackagesIndex.InferAddonPackagesFolder(FilePathBox.Text);
+        if (string.IsNullOrEmpty(addonPackagesFolder) || !Directory.Exists(addonPackagesFolder))
+        {
+            Log("Could not determine the AddonPackages folder from the loaded .var path.", ErrorBrush);
+            return;
+        }
+
+        DownloadAllMissingButton.IsEnabled = false;
+        RescanButton.IsEnabled = false;
+        UpdateButton.IsEnabled = false;
+
+        try
+        {
+            using var hub = new HubClient();
+            LogParts(
+                ("Force-installing ", HeaderBrush),
+                (dep.PackageBaseName, PluginBrush),
+                (" v", SubduedBrush),
+                (dep.HubLatestVersion?.ToString() ?? "?", NumberBrush),
+                ($" (scene asks for v{dep.RequestedVersion?.ToString() ?? "?"})...", SubduedBrush));
+
+            var ok = await DownloadSingleDepAsync(dep, hub, addonPackagesFolder);
+
+            // Even on successful download, keep flagging as VersionMismatch so the user
+            // remembers the scene's exact-version ref still isn't satisfied.
+            if (ok)
+            {
+                dep.InstalledVersion = dep.HubLatestVersion;
+                dep.Status = HubDependencyStatus.VersionMismatch;
+                LogParts(
+                    ("     ", DefaultBrush),
+                    ("(scene still references v", SubduedBrush),
+                    (dep.RequestedVersion?.ToString() ?? "?", NumberBrush),
+                    (" — update the ref to .latest or grab v", SubduedBrush),
+                    (dep.RequestedVersion?.ToString() ?? "?", NumberBrush),
+                    (" manually to fully resolve)", SubduedBrush));
+            }
+
+            UpdateSectionTabLabels();
+        }
+        finally
+        {
+            DownloadAllMissingButton.IsEnabled = _hubDeps.Any(d =>
+                d.Status == HubDependencyStatus.Missing ||
+                d.Status == HubDependencyStatus.UpdateAvailable);
+            RescanButton.IsEnabled = true;
+            var hasPlugins = _plugins.Count > 0;
+            var hasVoxta = _voxtaResources.Count > 0;
+            UpdateButton.IsEnabled = hasPlugins || hasVoxta;
+        }
+    }
+
+    private void DeleteInstalledDep(HubDependency dep)
+    {
+        var path = dep.InstalledPath;
+        if (string.IsNullOrEmpty(path) || !File.Exists(path))
+        {
+            // Already gone somehow — just sync the status.
+            dep.InstalledPath = null;
+            dep.InstalledVersion = null;
+            dep.Status = HubDependencyStatus.Missing;
+            UpdateSectionTabLabels();
+            return;
+        }
+
+        var filename = Path.GetFileName(path);
+        var sizeMb = new FileInfo(path).Length / (1024.0 * 1024);
+        var confirm = MessageBox.Show(
+            this,
+            $"Delete this .var from your AddonPackages folder?\n\n" +
+            $"File:   {filename}\n" +
+            $"Size:   {sizeMb:F1} MB\n\n" +
+            $"This removes the file from disk. You can re-download it via 'Install' after.",
+            "Confirm delete",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning,
+            MessageBoxResult.No);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        try
+        {
+            File.Delete(path);
+            dep.InstalledPath = null;
+            dep.InstalledVersion = null;
+
+            // If the dep was a VersionMismatch (scene asks for vX, Hub only has vY)
+            // that we force-installed, restore that status instead of flipping to Missing —
+            // the scene's exact-version ref is still genuinely unsatisfiable by Hub.
+            var isUnresolvableMismatch =
+                dep.RequestedVersion.HasValue &&
+                dep.HubLatestVersion.HasValue &&
+                dep.RequestedVersion != dep.HubLatestVersion;
+
+            dep.Status = isUnresolvableMismatch
+                ? HubDependencyStatus.VersionMismatch
+                : HubDependencyStatus.Missing;
+
+            LogParts(
+                ("Deleted ", HeaderBrush),
+                (filename, PathBrush),
+                (" from AddonPackages.", HeaderBrush));
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this,
+                $"Could not delete '{filename}':\n\n{ex.Message}",
+                "Delete failed", MessageBoxButton.OK, MessageBoxImage.Error);
+            Log($"Delete failed for {filename}: {ex.Message}", ErrorBrush);
+        }
+
+        UpdateSectionTabLabels();
+
+        // Re-enable Download All if we just created a new missing slot.
+        DownloadAllMissingButton.IsEnabled = _hubDeps.Any(d =>
+            d.Status == HubDependencyStatus.Missing ||
+            d.Status == HubDependencyStatus.UpdateAvailable);
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        if (bytes < 1024) return $"{bytes} B";
+        if (bytes < 1024L * 1024) return $"{bytes / 1024.0:F1} KB";
+        if (bytes < 1024L * 1024 * 1024) return $"{bytes / (1024.0 * 1024):F1} MB";
+        return $"{bytes / (1024.0 * 1024 * 1024):F2} GB";
+    }
+
     private void SectionTab_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not ToggleButton tb) return;
@@ -338,11 +925,13 @@ public partial class MainWindow : Window
 
     private void SwitchSection(string section)
     {
-        var wantVoxta = section == "Voxta";
-        SectionTabPlugins.IsChecked = !wantVoxta;
-        SectionTabVoxta.IsChecked = wantVoxta;
-        PluginsSection.Visibility = wantVoxta ? Visibility.Collapsed : Visibility.Visible;
-        VoxtaSection.Visibility = wantVoxta ? Visibility.Visible : Visibility.Collapsed;
+        SectionTabPlugins.IsChecked = section == "Plugins";
+        SectionTabVoxta.IsChecked = section == "Voxta";
+        SectionTabHubDeps.IsChecked = section == "HubDeps";
+
+        PluginsSection.Visibility = section == "Plugins" ? Visibility.Visible : Visibility.Collapsed;
+        VoxtaSection.Visibility = section == "Voxta" ? Visibility.Visible : Visibility.Collapsed;
+        HubDepsSection.Visibility = section == "HubDeps" ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void UpdateSectionTabLabels()
@@ -350,6 +939,8 @@ public partial class MainWindow : Window
         var pluginsCount = _plugins.Count;
         var missing = _voxtaResources.Count(r => r.Status == VoxtaResourceStatus.Missing);
         var voxtaTotal = _voxtaResources.Count;
+        var depsMissing = _hubDeps.Count(d => d.Status == HubDependencyStatus.Missing);
+        var depsTotal = _hubDeps.Count;
 
         SectionTabPlugins.Content = pluginsCount > 0 ? $"Plugin references ({pluginsCount})" : "Plugin references";
         SectionTabVoxta.Content = voxtaTotal == 0
@@ -357,6 +948,26 @@ public partial class MainWindow : Window
             : missing > 0
                 ? $"Voxta resources ({missing} missing)"
                 : $"Voxta resources ({voxtaTotal})";
+        var depsNotOnHub = _hubDeps.Count(d => d.Status == HubDependencyStatus.NotOnHub);
+        var depsUpdateAvail = _hubDeps.Count(d => d.Status == HubDependencyStatus.UpdateAvailable);
+        var depsMismatched = _hubDeps.Count(d => d.Status == HubDependencyStatus.VersionMismatch);
+        if (depsTotal == 0)
+        {
+            SectionTabHubDeps.Content = "Download deps";
+        }
+        else if (depsMissing > 0 || depsNotOnHub > 0 || depsUpdateAvail > 0 || depsMismatched > 0)
+        {
+            var parts = new List<string>();
+            if (depsMissing > 0) parts.Add($"{depsMissing} missing");
+            if (depsUpdateAvail > 0) parts.Add($"{depsUpdateAvail} update available");
+            if (depsMismatched > 0) parts.Add($"{depsMismatched} wrong version");
+            if (depsNotOnHub > 0) parts.Add($"{depsNotOnHub} not on Hub");
+            SectionTabHubDeps.Content = $"Download deps ({string.Join(", ", parts)})";
+        }
+        else
+        {
+            SectionTabHubDeps.Content = $"Download deps ({depsTotal})";
+        }
     }
 
     private void AttachResourceButton_Click(object sender, RoutedEventArgs e)

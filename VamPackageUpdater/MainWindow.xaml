@@ -471,6 +471,9 @@
                 <ToggleButton x:Name="SectionTabVoxta" Content="Voxta resources"
                               Click="SectionTab_Click" Tag="Voxta"
                               Style="{StaticResource SectionTabStyle}"/>
+                <ToggleButton x:Name="SectionTabHubDeps" Content="Download deps"
+                              Click="SectionTab_Click" Tag="HubDeps"
+                              Style="{StaticResource SectionTabStyle}"/>
             </StackPanel>
         </Border>
 
@@ -572,7 +575,9 @@
                 <DataGrid Grid.Row="2" x:Name="VoxtaGrid">
                     <DataGrid.Columns>
                         <DataGridTextColumn Header="Kind" Binding="{Binding KindLabel}" IsReadOnly="True" Width="110"/>
-                        <DataGridTextColumn Header="Name / UUID" Binding="{Binding NameOrId}" IsReadOnly="True" Width="2*"/>
+                        <DataGridTextColumn Header="Name" Binding="{Binding DisplayName}" IsReadOnly="True" Width="*"/>
+                        <DataGridTextColumn Header="UUID" Binding="{Binding Id}" IsReadOnly="True" Width="280"
+                                            FontFamily="Cascadia Mono, Consolas"/>
                         <DataGridTemplateColumn Header="Status" Width="110">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
@@ -643,6 +648,152 @@
                                             </Button.Style>
                                         </Button>
                                     </Grid>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </Grid>
+
+            <!-- HUB DEPENDENCIES SECTION -->
+            <Grid x:Name="HubDepsSection" Visibility="Collapsed">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
+                <StackPanel Grid.Row="0" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,6,0,2">
+                    <Button Content="Download all" Click="DownloadAllMissingButton_Click"
+                            IsEnabled="False" x:Name="DownloadAllMissingButton" Padding="8,3"
+                            ToolTip="Download every 'Missing' and 'Update avail' package from hub.virtamate.com. Existing installed versions are left in place - VaM resolves .latest to the newest one present."/>
+                </StackPanel>
+
+                <TextBlock Grid.Row="1"
+                           Foreground="#808080" FontSize="12" Margin="0,6,0,8" TextWrapping="Wrap"
+                           Text="Packages this .var depends on (from meta.json, transitive). 'Download all' fetches 'Missing' and 'Update avail' rows from hub.virtamate.com. Paid / non-hub content can't be auto-downloaded — grab those manually from the creator's Patreon."/>
+
+                <DataGrid Grid.Row="2" x:Name="HubDepsGrid">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Package" Binding="{Binding PackageBaseName}" IsReadOnly="True" Width="3*"/>
+                        <DataGridTextColumn Header="Requested" Binding="{Binding RequestedVersionLabel}" IsReadOnly="True" Width="90"
+                                            FontFamily="Cascadia Mono, Consolas"/>
+                        <DataGridTextColumn Header="Hub latest" Binding="{Binding HubLatestVersionLabel}" IsReadOnly="True" Width="90"
+                                            FontFamily="Cascadia Mono, Consolas"/>
+                        <DataGridTextColumn Header="License" Binding="{Binding LicenseLabel}" IsReadOnly="True" Width="100"/>
+                        <DataGridTemplateColumn Header="Status" Width="140">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding StatusLabel}" FontWeight="SemiBold"
+                                                   ToolTip="{Binding StatusTooltip}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="#c0c0c0"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding StatusLabel}" Value="Installed">
+                                                            <Setter Property="Foreground" Value="#6A9955"/>
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding StatusLabel}" Value="Update available">
+                                                            <Setter Property="Foreground" Value="#D7BA7D"/>
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding StatusLabel}" Value="Wrong version">
+                                                            <Setter Property="Foreground" Value="#D7BA7D"/>
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding StatusLabel}" Value="Missing">
+                                                            <Setter Property="Foreground" Value="#F48771"/>
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding StatusLabel}" Value="Queued">
+                                                            <Setter Property="Foreground" Value="#808080"/>
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding StatusLabel}" Value="Downloading">
+                                                            <Setter Property="Foreground" Value="#569CD6"/>
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding StatusLabel}" Value="Downloaded">
+                                                            <Setter Property="Foreground" Value="#6A9955"/>
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding StatusLabel}" Value="Not on Hub">
+                                                            <Setter Property="Foreground" Value="#D7BA7D"/>
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding StatusLabel}" Value="Error">
+                                                            <Setter Property="Foreground" Value="#F48771"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="Action" Width="120">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <Button Click="DepActionButton_Click" Tag="{Binding}"
+                                            Margin="4,2" Padding="8,2" FontSize="11">
+                                        <Button.Style>
+                                            <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                                <!-- Default (safe fallback): disabled "—" -->
+                                                <Setter Property="Content" Value="—"/>
+                                                <Setter Property="IsEnabled" Value="False"/>
+                                                <Setter Property="ToolTip" Value="No action available for this state."/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding StatusLabel}" Value="Missing">
+                                                        <Setter Property="Content" Value="Install"/>
+                                                        <Setter Property="IsEnabled" Value="True"/>
+                                                        <Setter Property="ToolTip" Value="Download just this package from hub.virtamate.com."/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding StatusLabel}" Value="Update available">
+                                                        <Setter Property="Content" Value="Update"/>
+                                                        <Setter Property="IsEnabled" Value="True"/>
+                                                        <Setter Property="ToolTip" Value="Download the newer version Hub has for this package. Existing version stays installed."/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding StatusLabel}" Value="Error">
+                                                        <Setter Property="Content" Value="Retry"/>
+                                                        <Setter Property="IsEnabled" Value="True"/>
+                                                        <Setter Property="ToolTip" Value="Retry downloading this package."/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding StatusLabel}" Value="Installed">
+                                                        <Setter Property="Content" Value="Delete"/>
+                                                        <Setter Property="Foreground" Value="#F48771"/>
+                                                        <Setter Property="IsEnabled" Value="True"/>
+                                                        <Setter Property="ToolTip" Value="Remove this .var from your AddonPackages folder. Destructive — confirms first."/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding StatusLabel}" Value="Downloaded">
+                                                        <Setter Property="Content" Value="Delete"/>
+                                                        <Setter Property="Foreground" Value="#F48771"/>
+                                                        <Setter Property="IsEnabled" Value="True"/>
+                                                        <Setter Property="ToolTip" Value="Remove this .var from your AddonPackages folder. Destructive — confirms first."/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding StatusLabel}" Value="Queued">
+                                                        <Setter Property="Content" Value="Queued"/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding StatusLabel}" Value="Downloading">
+                                                        <Setter Property="Content" Value="…"/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding StatusLabel}" Value="Not on Hub">
+                                                        <Setter Property="Content" Value="Manual"/>
+                                                        <Setter Property="ToolTip" Value="Not available on Hub — fetch this from the creator's Patreon/etc. manually."/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding StatusLabel}" Value="Wrong version">
+                                                        <Setter Property="Content" Value="Install anyway"/>
+                                                        <Setter Property="IsEnabled" Value="True"/>
+                                                        <Setter Property="ToolTip" Value="Hub has a different version than the scene requires. Install it anyway (won't satisfy the scene's exact ref — confirms first)."/>
+                                                    </DataTrigger>
+                                                    <MultiDataTrigger>
+                                                        <MultiDataTrigger.Conditions>
+                                                            <Condition Binding="{Binding StatusLabel}" Value="Wrong version"/>
+                                                            <Condition Binding="{Binding HasLocalFile}" Value="True"/>
+                                                        </MultiDataTrigger.Conditions>
+                                                        <Setter Property="Content" Value="Delete"/>
+                                                        <Setter Property="Foreground" Value="#F48771"/>
+                                                        <Setter Property="IsEnabled" Value="True"/>
+                                                        <Setter Property="ToolTip" Value="Hub's substitute version was force-installed. Status still says 'Wrong version' because the scene's exact ref isn't satisfied. Click to remove the installed .var."/>
+                                                    </MultiDataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Button.Style>
+                                    </Button>
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
