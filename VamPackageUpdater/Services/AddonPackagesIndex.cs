@@ -100,10 +100,12 @@ public sealed class AddonPackagesIndex
             if (satisfyingVersion is int v)
             {
                 dep.InstalledPath = _pathByFullName.TryGetValue($"{pkgKey}.{v}", out var p) ? p : null;
+                dep.InstalledVersion = v;
                 dep.Status = HubDependencyStatus.Installed;
             }
             else
             {
+                dep.InstalledVersion = null;
                 dep.Status = HubDependencyStatus.Missing;
             }
         }
@@ -148,6 +150,23 @@ public sealed class AddonPackagesIndex
         }
 
         return false;
+    }
+
+    /// <summary>True if the dependency name ends in ".latest" (case insensitive).</summary>
+    public static bool IsLatestRef(string depName) =>
+        !string.IsNullOrEmpty(depName) &&
+        depName.EndsWith(".latest", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Parse the version from a Hub-returned filename like "AcidBubbles.Timeline.291.var" → 291.
+    /// Returns null if the name doesn't match the expected pattern.
+    /// </summary>
+    public static int? ParseVersionFromFilename(string? filename)
+    {
+        if (string.IsNullOrEmpty(filename)) return null;
+        var stem = Path.GetFileNameWithoutExtension(filename);
+        var match = VarNamePattern.Match(stem);
+        return match.Success && int.TryParse(match.Groups["version"].Value, out var v) ? v : (int?)null;
     }
 
     /// <summary>

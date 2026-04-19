@@ -5,8 +5,10 @@ namespace VamPackageUpdater.Models;
 
 public enum HubDependencyStatus
 {
-    /// <summary>Already present in AddonPackages.</summary>
+    /// <summary>Already present in AddonPackages at a version that satisfies the ref.</summary>
     Installed,
+    /// <summary>Installed via a .latest ref, but Hub has a newer version available.</summary>
+    UpdateAvailable,
     /// <summary>Not present — will be queued for download.</summary>
     Missing,
     /// <summary>Queued to download but not started yet.</summary>
@@ -38,6 +40,12 @@ public sealed class HubDependency : INotifyPropertyChanged
     /// <summary>Absolute path on disk if found in AddonPackages.</summary>
     public string? InstalledPath { get; set; }
 
+    /// <summary>Version number of the local .var satisfying this ref (null if not installed).</summary>
+    public int? InstalledVersion { get; set; }
+
+    /// <summary>Newest version Hub reports for this package (null if Hub wasn't queried or has nothing).</summary>
+    public int? HubLatestVersion { get; set; }
+
     private HubDependencyStatus _status;
     public HubDependencyStatus Status
     {
@@ -48,6 +56,7 @@ public sealed class HubDependency : INotifyPropertyChanged
             _status = value;
             OnPropertyChanged();
             OnPropertyChanged(nameof(StatusLabel));
+            OnPropertyChanged(nameof(StatusTooltip));
         }
     }
 
@@ -65,14 +74,26 @@ public sealed class HubDependency : INotifyPropertyChanged
 
     public string StatusLabel => Status switch
     {
-        HubDependencyStatus.Installed   => "Installed",
-        HubDependencyStatus.Missing     => "Missing",
-        HubDependencyStatus.Queued      => "Queued",
-        HubDependencyStatus.Downloading => "Downloading",
-        HubDependencyStatus.Downloaded  => "Downloaded",
-        HubDependencyStatus.NotOnHub    => "Not on Hub",
-        HubDependencyStatus.Error       => "Error",
+        HubDependencyStatus.Installed       => "Installed",
+        HubDependencyStatus.UpdateAvailable => "Update avail",
+        HubDependencyStatus.Missing         => "Missing",
+        HubDependencyStatus.Queued          => "Queued",
+        HubDependencyStatus.Downloading     => "Downloading",
+        HubDependencyStatus.Downloaded      => "Downloaded",
+        HubDependencyStatus.NotOnHub        => "Not on Hub",
+        HubDependencyStatus.Error           => "Error",
         _ => Status.ToString()
+    };
+
+    /// <summary>Context-specific tooltip surfaced on the status cell.</summary>
+    public string? StatusTooltip => Status switch
+    {
+        HubDependencyStatus.UpdateAvailable when InstalledVersion.HasValue && HubLatestVersion.HasValue =>
+            $"Installed: v{InstalledVersion} · Hub latest: v{HubLatestVersion}. Scene's .latest ref still resolves via the installed version, but Hub has a newer one.",
+        HubDependencyStatus.NotOnHub =>
+            "Hub has no download URL for this package — it's paid-only, has been removed, or was never uploaded to Hub. Grab it manually from the creator's Patreon/etc.",
+        HubDependencyStatus.Error => ErrorMessage,
+        _ => null
     };
 
     public string LicenseLabel => string.IsNullOrWhiteSpace(License) ? "" : License;

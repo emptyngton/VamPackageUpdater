@@ -223,6 +223,12 @@ public partial class MainWindow : Window
                 var index = await Task.Run(() => new AddonPackagesIndex(addonPackagesFolder));
                 index.AnnotateStatus(depResults);
             }
+
+            // Ask the Hub upfront about availability for each dep:
+            //   - Non-installed → classify Missing vs NotOnHub based on Hub response
+            //   - .latest + installed → flag UpdateAvailable if Hub's latest version > installed version
+            await AnnotateWithHubAsync(depResults);
+
             foreach (var d in depResults)
                 _hubDeps.Add(d);
 
@@ -351,12 +357,68 @@ public partial class MainWindow : Window
         }
     }
 
+    private async Task AnnotateWithHubAsync(IList<HubDependency> deps)
+    {
+        // Deps to query:
+        //   - anything Missing (classify: Missing-downloadable vs NotOnHub)
+        //   - .latest refs that are Installed (check for newer version on Hub)
+        var toQuery = deps
+            .Where(d =>
+                d.Status == HubDependencyStatus.Missing ||
+                (d.Status == HubDependencyStatus.Installed && AddonPackagesIndex.IsLatestRef(d.Name)))
+            .ToList();
+
+        if (toQuery.Count == 0) return;
+
+        Dictionary<string, HubPackageInfo> lookup;
+        try
+        {
+            using var hub = new HubClient();
+            lookup = await hub.FindPackagesAsync(toQuery.Select(d => d.Name));
+        }
+        catch (Exception ex)
+        {
+            Log($"Warning: Hub availability check failed ({ex.Message}). 'Not on Hub' / 'Update avail' statuses are unknown until you can reach the Hub.", ErrorBrush);
+            return;
+        }
+
+        foreach (var dep in toQuery)
+        {
+            if (!lookup.TryGetValue(dep.Name, out var info) || !info.HasUsableDownloadUrl)
+            {
+                // Hub won't serve this. Only mark NotOnHub if not locally installed —
+                // an installed package we can't verify on Hub is still fine to use.
+                if (dep.Status == HubDependencyStatus.Missing)
+                    dep.Status = HubDependencyStatus.NotOnHub;
+                continue;
+            }
+
+            // Cache Hub's resolved download info so DownloadAll doesn't re-query.
+            dep.ResolvedFilename = info.Filename;
+            dep.DownloadUrl = info.DownloadUrl;
+
+            var hubVersion = AddonPackagesIndex.ParseVersionFromFilename(info.Filename);
+            dep.HubLatestVersion = hubVersion;
+
+            if (dep.Status == HubDependencyStatus.Installed &&
+                AddonPackagesIndex.IsLatestRef(dep.Name) &&
+                dep.InstalledVersion is int installedV &&
+                hubVersion is int hubV &&
+                hubV > installedV)
+            {
+                dep.Status = HubDependencyStatus.UpdateAvailable;
+            }
+        }
+    }
+
     private void LogHubDepsScanResults()
     {
         if (_hubDeps.Count == 0) return;
 
         var installed = _hubDeps.Count(d => d.Status == HubDependencyStatus.Installed);
         var missing = _hubDeps.Count(d => d.Status == HubDependencyStatus.Missing);
+        var notOnHub = _hubDeps.Count(d => d.Status == HubDependencyStatus.NotOnHub);
+        var updatable = _hubDeps.Count(d => d.Status == HubDependencyStatus.UpdateAvailable);
         var total = _hubDeps.Count;
 
         Log("");
@@ -365,14 +427,22 @@ public partial class MainWindow : Window
             (installed.ToString(), NumberBrush),
             (" installed, ", HeaderBrush),
             (missing.ToString(), missing > 0 ? ErrorBrush : NumberBrush),
-            (" missing (of ", HeaderBrush),
+            (" missing, ", HeaderBrush),
+            (notOnHub.ToString(), notOnHub > 0 ? ErrorBrush : NumberBrush),
+            (" not on Hub, ", HeaderBrush),
+            (updatable.ToString(), updatable > 0 ? LineBrush : NumberBrush),
+            (" update avail (of ", HeaderBrush),
             (total.ToString(), NumberBrush),
             (" total).", HeaderBrush));
 
         if (missing > 0)
         {
             Log("");
-            Log($"Open the 'Download deps' tab and click 'Download all missing' to fetch them from hub.virtamate.com.", SubduedBrush);
+            Log("Open the 'Download deps' tab and click 'Download all missing' to fetch them from hub.virtamate.com.", SubduedBrush);
+        }
+        if (notOnHub > 0)
+        {
+            Log("Some packages aren't on the Hub and must be fetched manually from their creator (Patreon, etc.).", SubduedBrush);
         }
     }
 
@@ -566,11 +636,22 @@ public partial class MainWindow : Window
             : missing > 0
                 ? $"Voxta resources ({missing} missing)"
                 : $"Voxta resources ({voxtaTotal})";
-        SectionTabHubDeps.Content = depsTotal == 0
-            ? "Download deps"
-            : depsMissing > 0
-                ? $"Download deps ({depsMissing} missing)"
-                : $"Download deps ({depsTotal})";
+        var depsNotOnHub = _hubDeps.Count(d => d.Status == HubDependencyStatus.NotOnHub);
+        if (depsTotal == 0)
+        {
+            SectionTabHubDeps.Content = "Download deps";
+        }
+        else if (depsMissing > 0 || depsNotOnHub > 0)
+        {
+            var parts = new List<string>();
+            if (depsMissing > 0) parts.Add($"{depsMissing} missing");
+            if (depsNotOnHub > 0) parts.Add($"{depsNotOnHub} not on Hub");
+            SectionTabHubDeps.Content = $"Download deps ({string.Join(", ", parts)})";
+        }
+        else
+        {
+            SectionTabHubDeps.Content = $"Download deps ({depsTotal})";
+        }
     }
 
     private void AttachResourceButton_Click(object sender, RoutedEventArgs e)

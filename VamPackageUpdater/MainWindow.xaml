@@ -679,13 +679,16 @@
                                 <DataTemplate>
                                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                         <TextBlock Text="{Binding StatusLabel}" FontWeight="SemiBold"
-                                                   ToolTip="{Binding ErrorMessage}">
+                                                   ToolTip="{Binding StatusTooltip}">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
                                                     <Setter Property="Foreground" Value="#c0c0c0"/>
                                                     <Style.Triggers>
                                                         <DataTrigger Binding="{Binding StatusLabel}" Value="Installed">
                                                             <Setter Property="Foreground" Value="#6A9955"/>
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding StatusLabel}" Value="Update avail">
+                                                            <Setter Property="Foreground" Value="#D7BA7D"/>
                                                         </DataTrigger>
                                                         <DataTrigger Binding="{Binding StatusLabel}" Value="Missing">
                                                             <Setter Property="Foreground" Value="#F48771"/>
