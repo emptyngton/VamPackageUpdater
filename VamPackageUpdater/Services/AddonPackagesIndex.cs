@@ -152,6 +152,33 @@ public sealed class AddonPackagesIndex
         return false;
     }
 
+    /// <summary>
+    /// Resolve a dependency reference ("Author.Package.3", "Author.Package.latest", etc.)
+    /// to an absolute .var path in this AddonPackages folder. For .latest we pick the
+    /// highest installed version; for .min.N we pick the highest installed that's >= N.
+    /// Returns null if nothing satisfies the ref.
+    /// </summary>
+    public string? TryGetInstalledVarPath(string depName)
+    {
+        if (!TryParseDepName(depName, out var pkgKey, out var version, out var isLatest, out var isMinVersion))
+            return null;
+        if (!_installedByPackage.TryGetValue(pkgKey, out var installed) || installed.Count == 0)
+            return null;
+
+        int? chosen = null;
+        if (isLatest)
+            chosen = installed.Max();
+        else if (isMinVersion)
+        {
+            var candidates = installed.Where(v => v >= version).ToList();
+            if (candidates.Count > 0) chosen = candidates.Max();
+        }
+        else if (installed.Contains(version))
+            chosen = version;
+
+        return chosen is int v && _pathByFullName.TryGetValue($"{pkgKey}.{v}", out var p) ? p : null;
+    }
+
     /// <summary>True if the dependency name ends in ".latest" (case insensitive).</summary>
     public static bool IsLatestRef(string depName) =>
         !string.IsNullOrEmpty(depName) &&

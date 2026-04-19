@@ -44,6 +44,7 @@ public sealed class MetaReader
                 LicenseType = GetString(root, "licenseType"),
                 Description = GetString(root, "description"),
                 Credits = GetString(root, "credits"),
+                PromotionalLink = GetString(root, "promotionalLink"),
                 ProgramVersion = GetString(root, "programVersion"),
                 FileSize = fileSize,
                 FileCount = fileCount

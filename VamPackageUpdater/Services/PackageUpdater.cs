@@ -14,12 +14,13 @@ public sealed class PackageUpdater
 
     public PackageUpdater(Action<string> log) => _log = log;
 
-    public async Task<UpdateResult> RunAsync(UpdaterOptions options, CancellationToken ct = default)
+    public Task<UpdateResult> RunAsync(UpdaterOptions options, CancellationToken ct = default)
     {
-        return await Task.Run(() => Run(options, ct), ct);
+        // Run the CPU-bound pipeline on the thread pool so the UI thread stays free.
+        return Task.Run(async () => await RunCoreAsync(options, ct), ct);
     }
 
-    private UpdateResult Run(UpdaterOptions opts, CancellationToken ct)
+    private async Task<UpdateResult> RunCoreAsync(UpdaterOptions opts, CancellationToken ct)
     {
         if (!File.Exists(opts.SourceVarPath))
             return UpdateResult.Fail($"Source .var not found: {opts.SourceVarPath}");
@@ -239,6 +240,11 @@ public sealed class PackageUpdater
             _log($"Repackaging to '{newFilename}'...");
             ZipFromDirectory(tempDir, outPath);
 
+            // Regenerate the sidecar {newvar}.var.depend.txt that VaM's Package Builder
+            // writes natively. It lists every dep with license/creator/link info so
+            // end-users downloading the .var (e.g. from Mega) know what they need.
+            await WriteDependTextAsync(opts.SourceVarPath, outPath, ct);
+
             _log(new string('-', 50));
             _log("Success! Package created at:");
             _log($"   {outPath}");
@@ -295,6 +301,37 @@ public sealed class PackageUpdater
     }
 
     private sealed record PluginPattern(Models.PluginUpdate Update, Regex Regex, string Replacement);
+
+    /// <summary>
+    /// Write the sidecar "{outPath}.depend.txt" listing every dep of the new .var.
+    /// Uses AddonPackages (inferred from the source .var's location) to pull
+    /// creator/promotionalLink per dep. Swallows any failure — the sidecar is a
+    /// nice-to-have, not critical for the .var itself.
+    /// </summary>
+    private async Task WriteDependTextAsync(string sourceVarPath, string outVarPath, CancellationToken ct)
+    {
+        try
+        {
+            var addonPackagesFolder = AddonPackagesIndex.InferAddonPackagesFolder(sourceVarPath);
+            AddonPackagesIndex? index = null;
+            if (!string.IsNullOrEmpty(addonPackagesFolder) && Directory.Exists(addonPackagesFolder))
+                index = new AddonPackagesIndex(addonPackagesFolder);
+
+            // If a .depend.txt already sits next to the source .var, pass it as a
+            // fallback data source — it has creator/link info for deps that may not
+            // be installed on this particular machine.
+            var existingSidecar = sourceVarPath + ".depend.txt";
+
+            var writer = new DependTextWriter();
+            var wrote = await writer.WriteAsync(outVarPath, index, existingSidecar, ct);
+            if (wrote)
+                _log($"Wrote sidecar '{Path.GetFileName(outVarPath)}.depend.txt' with dependency list.");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log($"Note: couldn't write {Path.GetFileName(outVarPath)}.depend.txt ({ex.Message}).");
+        }
+    }
 }
 
 public sealed record UpdateResult(bool Success, string? OutputPath, int Replacements, bool LicenseUpdated, string? Error)
