@@ -471,6 +471,9 @@
                 <ToggleButton x:Name="SectionTabVoxta" Content="Voxta resources"
                               Click="SectionTab_Click" Tag="Voxta"
                               Style="{StaticResource SectionTabStyle}"/>
+                <ToggleButton x:Name="SectionTabHubDeps" Content="Download deps"
+                              Click="SectionTab_Click" Tag="HubDeps"
+                              Style="{StaticResource SectionTabStyle}"/>
             </StackPanel>
         </Border>
 
@@ -643,6 +646,70 @@
                                             </Button.Style>
                                         </Button>
                                     </Grid>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </Grid>
+
+            <!-- HUB DEPENDENCIES SECTION -->
+            <Grid x:Name="HubDepsSection" Visibility="Collapsed">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
+                <StackPanel Grid.Row="0" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,6,0,2">
+                    <Button Content="Download all missing" Click="DownloadAllMissingButton_Click"
+                            IsEnabled="False" x:Name="DownloadAllMissingButton" Padding="8,3"/>
+                </StackPanel>
+
+                <TextBlock Grid.Row="1"
+                           Foreground="#808080" FontSize="12" Margin="0,6,0,8" TextWrapping="Wrap"
+                           Text="Packages this .var depends on (from meta.json, transitive). Any row marked 'Missing' will be fetched from hub.virtamate.com when you click Download All. Paid / non-hub content can't be auto-downloaded — grab those manually from the creator's Patreon."/>
+
+                <DataGrid Grid.Row="2" x:Name="HubDepsGrid">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Package" Binding="{Binding Name}" IsReadOnly="True" Width="3*"/>
+                        <DataGridTextColumn Header="License" Binding="{Binding LicenseLabel}" IsReadOnly="True" Width="100"/>
+                        <DataGridTemplateColumn Header="Status" Width="140">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding StatusLabel}" FontWeight="SemiBold"
+                                                   ToolTip="{Binding ErrorMessage}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="#c0c0c0"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding StatusLabel}" Value="Installed">
+                                                            <Setter Property="Foreground" Value="#6A9955"/>
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding StatusLabel}" Value="Missing">
+                                                            <Setter Property="Foreground" Value="#F48771"/>
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding StatusLabel}" Value="Queued">
+                                                            <Setter Property="Foreground" Value="#808080"/>
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding StatusLabel}" Value="Downloading">
+                                                            <Setter Property="Foreground" Value="#569CD6"/>
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding StatusLabel}" Value="Downloaded">
+                                                            <Setter Property="Foreground" Value="#6A9955"/>
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding StatusLabel}" Value="Not on Hub">
+                                                            <Setter Property="Foreground" Value="#D7BA7D"/>
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding StatusLabel}" Value="Error">
+                                                            <Setter Property="Foreground" Value="#F48771"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </StackPanel>
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>

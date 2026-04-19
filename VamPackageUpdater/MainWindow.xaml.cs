@@ -30,9 +30,11 @@ public partial class MainWindow : Window
 
     private readonly ObservableCollection<PluginReferenceGroup> _plugins = new();
     private readonly ObservableCollection<VoxtaResourceRef> _voxtaResources = new();
+    private readonly ObservableCollection<HubDependency> _hubDeps = new();
     private readonly PluginReferenceScanner _scanner = new();
     private readonly VoxtaResourceScanner _voxtaScanner = new();
     private readonly VoxtaPngInspector _pngInspector = new();
+    private readonly MetaJsonDependencyScanner _depScanner = new();
     private readonly MetaReader _metaReader = new();
     private Paragraph _logParagraph = null!;
     private PluginCategory? _activeFilter;
@@ -51,6 +53,7 @@ public partial class MainWindow : Window
         PluginsGrid.ItemsSource = _pluginsView;
 
         VoxtaGrid.ItemsSource = _voxtaResources;
+        HubDepsGrid.ItemsSource = _hubDeps;
 
         InitLogDocument();
     }
@@ -188,20 +191,24 @@ public partial class MainWindow : Window
 
         _plugins.Clear();
         _voxtaResources.Clear();
+        _hubDeps.Clear();
         RescanButton.IsEnabled = false;
         UpdateButton.IsEnabled = false;
         SetAllLatestButton.IsEnabled = false;
         ClearAllButton.IsEnabled = false;
         ClearAllAttachmentsButton.IsEnabled = false;
+        DownloadAllMissingButton.IsEnabled = false;
         LogParts(("Scanning ", SubduedBrush), ($"'{Path.GetFileName(FilePathBox.Text)}'", PathBrush), ("...", SubduedBrush));
 
         try
         {
             var metaTask = _metaReader.ReadAsync(FilePathBox.Text);
             var voxtaTask = _voxtaScanner.ScanAsync(FilePathBox.Text);
+            var depsTask = _depScanner.ScanAsync(FilePathBox.Text);
             var results = await _scanner.ScanAsync(FilePathBox.Text);
             var meta = await metaTask;
             var voxtaResults = await voxtaTask;
+            var depResults = await depsTask;
             ShowMetaPanel(meta);
 
             foreach (var g in results)
@@ -209,23 +216,38 @@ public partial class MainWindow : Window
             foreach (var r in voxtaResults)
                 _voxtaResources.Add(r);
 
+            // Check which deps are already in the user's AddonPackages folder.
+            var addonPackagesFolder = AddonPackagesIndex.InferAddonPackagesFolder(FilePathBox.Text);
+            if (!string.IsNullOrEmpty(addonPackagesFolder))
+            {
+                var index = await Task.Run(() => new AddonPackagesIndex(addonPackagesFolder));
+                index.AnnotateStatus(depResults);
+            }
+            foreach (var d in depResults)
+                _hubDeps.Add(d);
+
             LogPluginScanResults();
             LogVoxtaScanResults();
+            LogHubDepsScanResults();
 
             var hasPlugins = _plugins.Count > 0;
             var hasVoxta = _voxtaResources.Count > 0;
+            var hasMissingDeps = _hubDeps.Any(d => d.Status == HubDependencyStatus.Missing);
 
             UpdateButton.IsEnabled = hasPlugins || hasVoxta;
             SetAllLatestButton.IsEnabled = hasPlugins;
             ClearAllButton.IsEnabled = hasPlugins;
             ClearAllAttachmentsButton.IsEnabled = hasVoxta;
+            DownloadAllMissingButton.IsEnabled = hasMissingDeps;
             RescanButton.IsEnabled = true;
             UpdateTabCounts();
             UpdateSectionTabLabels();
 
-            // Auto-jump to Voxta tab if there are missing resources — they're the actionable ones.
+            // Auto-jump priority: Missing Voxta resources > Missing hub deps.
             if (_voxtaResources.Any(r => r.Status == VoxtaResourceStatus.Missing))
                 SwitchSection("Voxta");
+            else if (hasMissingDeps)
+                SwitchSection("HubDeps");
         }
         catch (Exception ex)
         {
@@ -329,6 +351,189 @@ public partial class MainWindow : Window
         }
     }
 
+    private void LogHubDepsScanResults()
+    {
+        if (_hubDeps.Count == 0) return;
+
+        var installed = _hubDeps.Count(d => d.Status == HubDependencyStatus.Installed);
+        var missing = _hubDeps.Count(d => d.Status == HubDependencyStatus.Missing);
+        var total = _hubDeps.Count;
+
+        Log("");
+        LogParts(
+            ("Hub dependencies: ", HeaderBrush),
+            (installed.ToString(), NumberBrush),
+            (" installed, ", HeaderBrush),
+            (missing.ToString(), missing > 0 ? ErrorBrush : NumberBrush),
+            (" missing (of ", HeaderBrush),
+            (total.ToString(), NumberBrush),
+            (" total).", HeaderBrush));
+
+        if (missing > 0)
+        {
+            Log("");
+            Log($"Open the 'Download deps' tab and click 'Download all missing' to fetch them from hub.virtamate.com.", SubduedBrush);
+        }
+    }
+
+    private async void DownloadAllMissingButton_Click(object sender, RoutedEventArgs e)
+    {
+        var missing = _hubDeps.Where(d => d.Status == HubDependencyStatus.Missing).ToList();
+        if (missing.Count == 0) return;
+
+        var addonPackagesFolder = AddonPackagesIndex.InferAddonPackagesFolder(FilePathBox.Text);
+        if (string.IsNullOrEmpty(addonPackagesFolder) || !Directory.Exists(addonPackagesFolder))
+        {
+            Log("Could not determine the AddonPackages folder from the loaded .var path.", ErrorBrush);
+            return;
+        }
+
+        DownloadAllMissingButton.IsEnabled = false;
+        RescanButton.IsEnabled = false;
+        UpdateButton.IsEnabled = false;
+
+        try
+        {
+            foreach (var dep in missing)
+                dep.Status = HubDependencyStatus.Queued;
+
+            LogParts(
+                ("Querying Hub for ", HeaderBrush),
+                (missing.Count.ToString(), NumberBrush),
+                (" missing package(s)...", HeaderBrush));
+
+            using var hub = new HubClient();
+            Dictionary<string, HubPackageInfo> lookup;
+            try
+            {
+                lookup = await hub.FindPackagesAsync(missing.Select(d => d.Name));
+            }
+            catch (Exception ex)
+            {
+                Log($"Hub query failed: {ex.Message}", ErrorBrush);
+                foreach (var dep in missing)
+                {
+                    dep.Status = HubDependencyStatus.Error;
+                    dep.ErrorMessage = "Hub query failed";
+                }
+                return;
+            }
+
+            // Some packages get a "...?file=" truncated URL back and need a second query —
+            // VamToolbox's workaround.
+            var needsRetry = missing
+                .Where(d =>
+                    lookup.TryGetValue(d.Name, out var info) &&
+                    !string.IsNullOrEmpty(info.DownloadUrl) &&
+                    info.DownloadUrl!.EndsWith("?file=", StringComparison.OrdinalIgnoreCase))
+                .Select(d => d.Name)
+                .ToList();
+            if (needsRetry.Count > 0)
+            {
+                try
+                {
+                    var retry = await hub.FindPackagesAsync(needsRetry);
+                    foreach (var kv in retry)
+                        lookup[kv.Key] = kv.Value;
+                }
+                catch { /* best-effort retry */ }
+            }
+
+            var downloaded = 0;
+            var skipped = 0;
+            foreach (var dep in missing)
+            {
+                if (!lookup.TryGetValue(dep.Name, out var info) || !info.HasUsableDownloadUrl)
+                {
+                    dep.Status = HubDependencyStatus.NotOnHub;
+                    dep.ErrorMessage = "Hub returned no download URL (package is paid-only, removed, or never uploaded to Hub).";
+                    LogParts(
+                        ("  - ", DefaultBrush),
+                        ("[Not on Hub] ", ErrorBrush),
+                        (dep.Name, PluginBrush));
+                    skipped++;
+                    continue;
+                }
+
+                dep.ResolvedFilename = info.Filename;
+                dep.DownloadUrl = info.DownloadUrl;
+                dep.Status = HubDependencyStatus.Downloading;
+
+                var destination = Path.Combine(addonPackagesFolder, info.Filename ?? dep.Name + ".var");
+                if (File.Exists(destination))
+                {
+                    // Somebody else grabbed it between scan and now — count as installed.
+                    dep.InstalledPath = destination;
+                    dep.Status = HubDependencyStatus.Installed;
+                    LogParts(
+                        ("  - ", DefaultBrush),
+                        ("[Already present] ", SuccessBrush),
+                        (info.Filename ?? dep.Name, PluginBrush));
+                    continue;
+                }
+
+                LogParts(
+                    ("  - ", DefaultBrush),
+                    ("Downloading ", HeaderBrush),
+                    (info.Filename ?? dep.Name, PathBrush),
+                    ("...", SubduedBrush));
+
+                HubDownloadResult result;
+                try
+                {
+                    result = await hub.DownloadAsync(info.DownloadUrl!, destination);
+                }
+                catch (Exception ex)
+                {
+                    result = HubDownloadResult.Fail(ex.Message);
+                }
+
+                if (result.Success)
+                {
+                    dep.InstalledPath = destination;
+                    dep.Status = HubDependencyStatus.Downloaded;
+                    downloaded++;
+                    LogParts(
+                        ("     ", DefaultBrush),
+                        ($"-> {FormatBytes(result.Bytes)}", SubduedBrush));
+                }
+                else
+                {
+                    dep.Status = HubDependencyStatus.Error;
+                    dep.ErrorMessage = result.Error;
+                    LogParts(
+                        ("     ", DefaultBrush),
+                        ("-> Error: ", ErrorBrush),
+                        (result.Error ?? "unknown", ErrorBrush));
+                }
+            }
+
+            Log("");
+            LogParts(
+                ("Done. Downloaded ", HeaderBrush),
+                (downloaded.ToString(), NumberBrush),
+                (skipped > 0 ? $", skipped {skipped} (paid/removed)." : ".", HeaderBrush));
+
+            UpdateSectionTabLabels();
+        }
+        finally
+        {
+            DownloadAllMissingButton.IsEnabled = _hubDeps.Any(d => d.Status == HubDependencyStatus.Missing);
+            RescanButton.IsEnabled = true;
+            var hasPlugins = _plugins.Count > 0;
+            var hasVoxta = _voxtaResources.Count > 0;
+            UpdateButton.IsEnabled = hasPlugins || hasVoxta;
+        }
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        if (bytes < 1024) return $"{bytes} B";
+        if (bytes < 1024L * 1024) return $"{bytes / 1024.0:F1} KB";
+        if (bytes < 1024L * 1024 * 1024) return $"{bytes / (1024.0 * 1024):F1} MB";
+        return $"{bytes / (1024.0 * 1024 * 1024):F2} GB";
+    }
+
     private void SectionTab_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not ToggleButton tb) return;
@@ -338,11 +543,13 @@ public partial class MainWindow : Window
 
     private void SwitchSection(string section)
     {
-        var wantVoxta = section == "Voxta";
-        SectionTabPlugins.IsChecked = !wantVoxta;
-        SectionTabVoxta.IsChecked = wantVoxta;
-        PluginsSection.Visibility = wantVoxta ? Visibility.Collapsed : Visibility.Visible;
-        VoxtaSection.Visibility = wantVoxta ? Visibility.Visible : Visibility.Collapsed;
+        SectionTabPlugins.IsChecked = section == "Plugins";
+        SectionTabVoxta.IsChecked = section == "Voxta";
+        SectionTabHubDeps.IsChecked = section == "HubDeps";
+
+        PluginsSection.Visibility = section == "Plugins" ? Visibility.Visible : Visibility.Collapsed;
+        VoxtaSection.Visibility = section == "Voxta" ? Visibility.Visible : Visibility.Collapsed;
+        HubDepsSection.Visibility = section == "HubDeps" ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void UpdateSectionTabLabels()
@@ -350,6 +557,8 @@ public partial class MainWindow : Window
         var pluginsCount = _plugins.Count;
         var missing = _voxtaResources.Count(r => r.Status == VoxtaResourceStatus.Missing);
         var voxtaTotal = _voxtaResources.Count;
+        var depsMissing = _hubDeps.Count(d => d.Status == HubDependencyStatus.Missing);
+        var depsTotal = _hubDeps.Count;
 
         SectionTabPlugins.Content = pluginsCount > 0 ? $"Plugin references ({pluginsCount})" : "Plugin references";
         SectionTabVoxta.Content = voxtaTotal == 0
@@ -357,6 +566,11 @@ public partial class MainWindow : Window
             : missing > 0
                 ? $"Voxta resources ({missing} missing)"
                 : $"Voxta resources ({voxtaTotal})";
+        SectionTabHubDeps.Content = depsTotal == 0
+            ? "Download deps"
+            : depsMissing > 0
+                ? $"Download deps ({depsMissing} missing)"
+                : $"Download deps ({depsTotal})";
     }
 
     private void AttachResourceButton_Click(object sender, RoutedEventArgs e)
