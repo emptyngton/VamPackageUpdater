@@ -451,7 +451,7 @@ public partial class MainWindow : Window
             (mismatched.ToString(), mismatched > 0 ? LineBrush : NumberBrush),
             (" wrong version, ", HeaderBrush),
             (updatable.ToString(), updatable > 0 ? LineBrush : NumberBrush),
-            (" update avail (of ", HeaderBrush),
+            (" update available (of ", HeaderBrush),
             (total.ToString(), NumberBrush),
             (" total).", HeaderBrush));
 
@@ -580,62 +580,15 @@ public partial class MainWindow : Window
 
                 dep.ResolvedFilename = info.Filename;
                 dep.DownloadUrl = info.DownloadUrl;
-                dep.Status = HubDependencyStatus.Downloading;
-
-                var destination = Path.Combine(addonPackagesFolder, info.Filename ?? dep.Name + ".var");
-                if (File.Exists(destination))
-                {
-                    // Somebody else grabbed it between scan and now — count as installed.
-                    dep.InstalledPath = destination;
-                    dep.Status = HubDependencyStatus.Installed;
-                    LogParts(
-                        ("  - ", DefaultBrush),
-                        ("[Already present] ", SuccessBrush),
-                        (info.Filename ?? dep.Name, PluginBrush));
-                    continue;
-                }
-
-                LogParts(
-                    ("  - ", DefaultBrush),
-                    ("Downloading ", HeaderBrush),
-                    (info.Filename ?? dep.Name, PathBrush),
-                    ("...", SubduedBrush));
-
-                HubDownloadResult result;
-                try
-                {
-                    result = await hub.DownloadAsync(info.DownloadUrl!, destination);
-                }
-                catch (Exception ex)
-                {
-                    result = HubDownloadResult.Fail(ex.Message);
-                }
-
-                if (result.Success)
-                {
-                    dep.InstalledPath = destination;
-                    dep.Status = HubDependencyStatus.Downloaded;
-                    downloaded++;
-                    LogParts(
-                        ("     ", DefaultBrush),
-                        ($"-> {FormatBytes(result.Bytes)}", SubduedBrush));
-                }
-                else
-                {
-                    dep.Status = HubDependencyStatus.Error;
-                    dep.ErrorMessage = result.Error;
-                    LogParts(
-                        ("     ", DefaultBrush),
-                        ("-> Error: ", ErrorBrush),
-                        (result.Error ?? "unknown", ErrorBrush));
-                }
+                var ok = await DownloadSingleDepAsync(dep, hub, addonPackagesFolder);
+                if (ok) downloaded++; else skipped++;
             }
 
             Log("");
             LogParts(
                 ("Done. Downloaded ", HeaderBrush),
                 (downloaded.ToString(), NumberBrush),
-                (skipped > 0 ? $", skipped {skipped} (paid/removed)." : ".", HeaderBrush));
+                (skipped > 0 ? $", skipped {skipped} (paid/removed/error)." : ".", HeaderBrush));
 
             UpdateSectionTabLabels();
         }
@@ -649,6 +602,211 @@ public partial class MainWindow : Window
             var hasVoxta = _voxtaResources.Count > 0;
             UpdateButton.IsEnabled = hasPlugins || hasVoxta;
         }
+    }
+
+    /// <summary>
+    /// Download a single dep using its already-resolved DownloadUrl + ResolvedFilename.
+    /// Handles the existing-file short-circuit, logs transitions, updates Status/ErrorMessage.
+    /// Returns true if the file ended up present in AddonPackages (fresh download or already there).
+    /// </summary>
+    private async Task<bool> DownloadSingleDepAsync(HubDependency dep, HubClient hub, string addonPackagesFolder)
+    {
+        if (string.IsNullOrEmpty(dep.DownloadUrl) || string.IsNullOrEmpty(dep.ResolvedFilename))
+        {
+            dep.Status = HubDependencyStatus.Error;
+            dep.ErrorMessage = "No resolved Hub download info — run Rescan first.";
+            LogParts(
+                ("  - ", DefaultBrush),
+                ("[No Hub info] ", ErrorBrush),
+                (dep.Name, PluginBrush));
+            return false;
+        }
+
+        var destination = Path.Combine(addonPackagesFolder, dep.ResolvedFilename);
+        if (File.Exists(destination))
+        {
+            dep.InstalledPath = destination;
+            dep.Status = HubDependencyStatus.Installed;
+            LogParts(
+                ("  - ", DefaultBrush),
+                ("[Already present] ", SuccessBrush),
+                (dep.ResolvedFilename, PluginBrush));
+            return true;
+        }
+
+        dep.Status = HubDependencyStatus.Downloading;
+        LogParts(
+            ("  - ", DefaultBrush),
+            ("Downloading ", HeaderBrush),
+            (dep.ResolvedFilename, PathBrush),
+            ("...", SubduedBrush));
+
+        HubDownloadResult result;
+        try
+        {
+            result = await hub.DownloadAsync(dep.DownloadUrl, destination);
+        }
+        catch (Exception ex)
+        {
+            result = HubDownloadResult.Fail(ex.Message);
+        }
+
+        if (result.Success)
+        {
+            dep.InstalledPath = destination;
+            dep.Status = HubDependencyStatus.Downloaded;
+            LogParts(
+                ("     ", DefaultBrush),
+                ($"-> {FormatBytes(result.Bytes)}", SubduedBrush));
+            return true;
+        }
+
+        dep.Status = HubDependencyStatus.Error;
+        dep.ErrorMessage = result.Error;
+        LogParts(
+            ("     ", DefaultBrush),
+            ("-> Error: ", ErrorBrush),
+            (result.Error ?? "unknown", ErrorBrush));
+        return false;
+    }
+
+    private async void DepActionButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button btn || btn.Tag is not HubDependency dep) return;
+
+        // Branch by status. Installed / Downloaded → destructive Delete. Missing /
+        // UpdateAvailable / Error → install via Hub. Other states are presented as
+        // disabled buttons in the XAML, so they shouldn't fire the click event.
+        if (dep.Status == HubDependencyStatus.Installed || dep.Status == HubDependencyStatus.Downloaded)
+        {
+            DeleteInstalledDep(dep);
+            return;
+        }
+
+        if (dep.Status != HubDependencyStatus.Missing &&
+            dep.Status != HubDependencyStatus.UpdateAvailable &&
+            dep.Status != HubDependencyStatus.Error)
+            return;
+
+        var addonPackagesFolder = AddonPackagesIndex.InferAddonPackagesFolder(FilePathBox.Text);
+        if (string.IsNullOrEmpty(addonPackagesFolder) || !Directory.Exists(addonPackagesFolder))
+        {
+            Log("Could not determine the AddonPackages folder from the loaded .var path.", ErrorBrush);
+            return;
+        }
+
+        DownloadAllMissingButton.IsEnabled = false;
+        RescanButton.IsEnabled = false;
+        UpdateButton.IsEnabled = false;
+
+        try
+        {
+            using var hub = new HubClient();
+
+            // If scan already cached DownloadUrl we reuse it. Otherwise (user clicked Retry
+            // on an Error row, or cache got cleared somehow) query Hub for just this one.
+            if (string.IsNullOrEmpty(dep.DownloadUrl) || string.IsNullOrEmpty(dep.ResolvedFilename))
+            {
+                try
+                {
+                    var lookup = await hub.FindPackagesAsync(new[] { dep.Name });
+                    if (lookup.TryGetValue(dep.Name, out var info) && info.HasUsableDownloadUrl)
+                    {
+                        dep.ResolvedFilename = info.Filename;
+                        dep.DownloadUrl = info.DownloadUrl;
+                    }
+                    else
+                    {
+                        dep.Status = HubDependencyStatus.NotOnHub;
+                        dep.ErrorMessage = "Hub returned no download URL (paid-only/removed/never uploaded).";
+                        LogParts(
+                            ("  - ", DefaultBrush),
+                            ("[Not on Hub] ", ErrorBrush),
+                            (dep.Name, PluginBrush));
+                        return;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    dep.Status = HubDependencyStatus.Error;
+                    dep.ErrorMessage = ex.Message;
+                    Log($"Hub query failed for {dep.Name}: {ex.Message}", ErrorBrush);
+                    return;
+                }
+            }
+
+            LogParts(
+                ("Installing ", HeaderBrush),
+                (dep.Name, PluginBrush),
+                ("...", SubduedBrush));
+
+            await DownloadSingleDepAsync(dep, hub, addonPackagesFolder);
+            UpdateSectionTabLabels();
+        }
+        finally
+        {
+            DownloadAllMissingButton.IsEnabled = _hubDeps.Any(d =>
+                d.Status == HubDependencyStatus.Missing ||
+                d.Status == HubDependencyStatus.UpdateAvailable);
+            RescanButton.IsEnabled = true;
+            var hasPlugins = _plugins.Count > 0;
+            var hasVoxta = _voxtaResources.Count > 0;
+            UpdateButton.IsEnabled = hasPlugins || hasVoxta;
+        }
+    }
+
+    private void DeleteInstalledDep(HubDependency dep)
+    {
+        var path = dep.InstalledPath;
+        if (string.IsNullOrEmpty(path) || !File.Exists(path))
+        {
+            // Already gone somehow — just sync the status.
+            dep.InstalledPath = null;
+            dep.InstalledVersion = null;
+            dep.Status = HubDependencyStatus.Missing;
+            UpdateSectionTabLabels();
+            return;
+        }
+
+        var filename = Path.GetFileName(path);
+        var sizeMb = new FileInfo(path).Length / (1024.0 * 1024);
+        var confirm = MessageBox.Show(
+            this,
+            $"Delete this .var from your AddonPackages folder?\n\n" +
+            $"File:   {filename}\n" +
+            $"Size:   {sizeMb:F1} MB\n\n" +
+            $"This removes the file from disk. You can re-download it via 'Install' after.",
+            "Confirm delete",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning,
+            MessageBoxResult.No);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        try
+        {
+            File.Delete(path);
+            dep.InstalledPath = null;
+            dep.InstalledVersion = null;
+            dep.Status = HubDependencyStatus.Missing;
+            LogParts(
+                ("Deleted ", HeaderBrush),
+                (filename, PathBrush),
+                (" from AddonPackages.", HeaderBrush));
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this,
+                $"Could not delete '{filename}':\n\n{ex.Message}",
+                "Delete failed", MessageBoxButton.OK, MessageBoxImage.Error);
+            Log($"Delete failed for {filename}: {ex.Message}", ErrorBrush);
+        }
+
+        UpdateSectionTabLabels();
+
+        // Re-enable Download All if we just created a new missing slot.
+        DownloadAllMissingButton.IsEnabled = _hubDeps.Any(d =>
+            d.Status == HubDependencyStatus.Missing ||
+            d.Status == HubDependencyStatus.UpdateAvailable);
     }
 
     private static string FormatBytes(long bytes)
@@ -702,7 +860,7 @@ public partial class MainWindow : Window
         {
             var parts = new List<string>();
             if (depsMissing > 0) parts.Add($"{depsMissing} missing");
-            if (depsUpdateAvail > 0) parts.Add($"{depsUpdateAvail} update avail");
+            if (depsUpdateAvail > 0) parts.Add($"{depsUpdateAvail} update available");
             if (depsMismatched > 0) parts.Add($"{depsMismatched} wrong version");
             if (depsNotOnHub > 0) parts.Add($"{depsNotOnHub} not on Hub");
             SectionTabHubDeps.Content = $"Download deps ({string.Join(", ", parts)})";

@@ -688,7 +688,7 @@
                                                         <DataTrigger Binding="{Binding StatusLabel}" Value="Installed">
                                                             <Setter Property="Foreground" Value="#6A9955"/>
                                                         </DataTrigger>
-                                                        <DataTrigger Binding="{Binding StatusLabel}" Value="Update avail">
+                                                        <DataTrigger Binding="{Binding StatusLabel}" Value="Update available">
                                                             <Setter Property="Foreground" Value="#D7BA7D"/>
                                                         </DataTrigger>
                                                         <DataTrigger Binding="{Binding StatusLabel}" Value="Wrong version">
@@ -717,6 +717,66 @@
                                             </TextBlock.Style>
                                         </TextBlock>
                                     </StackPanel>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="Action" Width="120">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <Button Click="DepActionButton_Click" Tag="{Binding}"
+                                            Margin="4,2" Padding="8,2" FontSize="11">
+                                        <Button.Style>
+                                            <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                                <!-- Default (safe fallback): disabled "—" -->
+                                                <Setter Property="Content" Value="—"/>
+                                                <Setter Property="IsEnabled" Value="False"/>
+                                                <Setter Property="ToolTip" Value="No action available for this state."/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding StatusLabel}" Value="Missing">
+                                                        <Setter Property="Content" Value="Install"/>
+                                                        <Setter Property="IsEnabled" Value="True"/>
+                                                        <Setter Property="ToolTip" Value="Download just this package from hub.virtamate.com."/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding StatusLabel}" Value="Update available">
+                                                        <Setter Property="Content" Value="Update"/>
+                                                        <Setter Property="IsEnabled" Value="True"/>
+                                                        <Setter Property="ToolTip" Value="Download the newer version Hub has for this package. Existing version stays installed."/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding StatusLabel}" Value="Error">
+                                                        <Setter Property="Content" Value="Retry"/>
+                                                        <Setter Property="IsEnabled" Value="True"/>
+                                                        <Setter Property="ToolTip" Value="Retry downloading this package."/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding StatusLabel}" Value="Installed">
+                                                        <Setter Property="Content" Value="Delete"/>
+                                                        <Setter Property="Foreground" Value="#F48771"/>
+                                                        <Setter Property="IsEnabled" Value="True"/>
+                                                        <Setter Property="ToolTip" Value="Remove this .var from your AddonPackages folder. Destructive — confirms first."/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding StatusLabel}" Value="Downloaded">
+                                                        <Setter Property="Content" Value="Delete"/>
+                                                        <Setter Property="Foreground" Value="#F48771"/>
+                                                        <Setter Property="IsEnabled" Value="True"/>
+                                                        <Setter Property="ToolTip" Value="Remove this .var from your AddonPackages folder. Destructive — confirms first."/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding StatusLabel}" Value="Queued">
+                                                        <Setter Property="Content" Value="Queued"/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding StatusLabel}" Value="Downloading">
+                                                        <Setter Property="Content" Value="…"/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding StatusLabel}" Value="Not on Hub">
+                                                        <Setter Property="Content" Value="Manual"/>
+                                                        <Setter Property="ToolTip" Value="Not available on Hub — fetch this from the creator's Patreon/etc. manually."/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding StatusLabel}" Value="Wrong version">
+                                                        <Setter Property="Content" Value="Manual"/>
+                                                        <Setter Property="ToolTip" Value="Hub has a different version than the scene requires. Either grab the exact version manually or rewrite the ref to .latest in the Plugin references tab."/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Button.Style>
+                                    </Button>
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>

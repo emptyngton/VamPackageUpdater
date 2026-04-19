@@ -83,7 +83,7 @@ public sealed class HubDependency : INotifyPropertyChanged
     public string StatusLabel => Status switch
     {
         HubDependencyStatus.Installed        => "Installed",
-        HubDependencyStatus.UpdateAvailable  => "Update avail",
+        HubDependencyStatus.UpdateAvailable  => "Update available",
         HubDependencyStatus.Missing          => "Missing",
         HubDependencyStatus.VersionMismatch  => "Wrong version",
         HubDependencyStatus.Queued           => "Queued",
