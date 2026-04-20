@@ -1133,6 +1133,7 @@ public partial class MainWindow : Window
             VoxtaAttachments = attachments,
             NewLicenseLine = Licenses.All[selectedLicense],
             DryRun = DryRunCheck.IsChecked == true,
+            OutputMode = OutputModeReplace.IsChecked == true ? OutputMode.ReplaceInPlace : OutputMode.Increment,
             OnCollision = PromptCollision
         };
 

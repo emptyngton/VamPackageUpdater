@@ -10,6 +10,13 @@ public sealed class PackageUpdater
     private static readonly HashSet<string> ScannableExtensions =
         new(StringComparer.OrdinalIgnoreCase) { ".json", ".vap", ".vam", ".vaj", ".vab" };
 
+    private const string UpdatedPackagesDir = "updated_packages";
+    private const string BackupSubdir = "backup";
+    // `.var.bak` is deliberate: VaM's package scanner matches `*.var` only, so the suffix
+    // keeps backups on disk without polluting the VaM UI. Don't rename without reading
+    // updated_packages/backup/README equivalent (there isn't one; this is it).
+    private const string BackupExtension = ".var.bak";
+
     private readonly Action<string> _log;
 
     public PackageUpdater(Action<string> log) => _log = log;
@@ -188,51 +195,120 @@ public sealed class PackageUpdater
 
             var sourceFile = new FileInfo(opts.SourceVarPath);
             var stem = Path.GetFileNameWithoutExtension(sourceFile.Name);
-            var parts = stem.Split('.');
+
+            string outPath;
             string newFilename;
-            if (parts.Length > 1 && int.TryParse(parts[^1], out var n))
+            string sidecarFallbackPath = opts.SourceVarPath + ".depend.txt";
+
+            if (opts.OutputMode == OutputMode.ReplaceInPlace)
             {
-                parts[^1] = (n + 1).ToString();
-                newFilename = string.Join('.', parts) + ".var";
+                // Overwrite the source .var in place, after moving the original to a
+                // timestamped backup inside updated_packages/backup/.
+                outPath = opts.SourceVarPath;
+                newFilename = sourceFile.Name;
+
+                var backupDir = Path.Combine(sourceFile.DirectoryName!, UpdatedPackagesDir, BackupSubdir);
+                var backupVarPath = FindFreeBackupPath(backupDir, stem);
+                var backupSidecarPath = backupVarPath + ".depend.txt";
+
+                if (opts.DryRun)
+                {
+                    _log("");
+                    _log(new string('-', 50));
+                    _log("DRY RUN: no file was written. Would have:");
+                    _log($"   - Moved source to: {backupVarPath}");
+                    _log($"   - Overwritten:     {outPath}");
+                    return UpdateResult.Ok(null, totalReplacements, licenseUpdated);
+                }
+
+                // Atomic ordering: write new zip to a temp path FIRST, then move source
+                // (+sidecar) to backup, then move temp onto source path. If the zip write
+                // fails, source stays untouched and no backup is created. If the final
+                // move fails, backup still holds the original; log restore instructions.
+                var tempOutPath = outPath + ".tmp";
+                if (File.Exists(tempOutPath)) File.Delete(tempOutPath);
+
+                _log("");
+                _log($"Repackaging to '{newFilename}'...");
+                ZipFromDirectory(tempDir, tempOutPath);
+
+                Directory.CreateDirectory(backupDir);
+                File.Move(opts.SourceVarPath, backupVarPath);
+                _log($"Backed up original to '{UpdatedPackagesDir}/{BackupSubdir}/{Path.GetFileName(backupVarPath)}'.");
+
+                if (File.Exists(sidecarFallbackPath))
+                {
+                    File.Move(sidecarFallbackPath, backupSidecarPath);
+                    sidecarFallbackPath = backupSidecarPath;
+                }
+
+                try
+                {
+                    File.Move(tempOutPath, outPath);
+                }
+                catch
+                {
+                    _log("");
+                    _log("ERROR: could not install new .var at source path. Original is intact at:");
+                    _log($"   {backupVarPath}");
+                    _log("Rename it back (strip the '.bak' and timestamp) to restore.");
+                    throw;
+                }
+
+                await WriteDependTextAsync(opts.SourceVarPath, sidecarFallbackPath, outPath, ct);
+
+                _log(new string('-', 50));
+                _log("Success! Package created at:");
+                _log($"   {outPath}");
+                return UpdateResult.Ok(outPath, totalReplacements, licenseUpdated);
             }
             else
             {
-                newFilename = stem + ".updated.var";
-                _log("");
-                _log("- Note: Could not find numeric version in filename. Using fallback name.");
-            }
-
-            var outDir = Path.Combine(sourceFile.DirectoryName!, "updated_packages");
-            Directory.CreateDirectory(outDir);
-            var outPath = Path.Combine(outDir, newFilename);
-
-            if (opts.DryRun)
-            {
-                _log("");
-                _log(new string('-', 50));
-                _log("DRY RUN: no file was written. Would have created:");
-                _log($"   {outPath}");
-                return UpdateResult.Ok(null, totalReplacements, licenseUpdated);
-            }
-
-            if (File.Exists(outPath))
-            {
-                var choice = opts.OnCollision?.Invoke(outPath) ?? CollisionChoice.Overwrite;
-                switch (choice)
+                var parts = stem.Split('.');
+                if (parts.Length > 1 && int.TryParse(parts[^1], out var n))
                 {
-                    case CollisionChoice.Cancel:
-                        _log("");
-                        _log("Cancelled. No file was written.");
-                        return UpdateResult.Ok(null, totalReplacements, licenseUpdated);
-                    case CollisionChoice.NextFree:
-                        outPath = FindNextFreePath(outDir, stem);
-                        newFilename = Path.GetFileName(outPath);
-                        _log($"Using next free filename: {newFilename}");
-                        break;
-                    case CollisionChoice.Overwrite:
-                        _log($"Overwriting existing '{newFilename}'.");
-                        File.Delete(outPath);
-                        break;
+                    parts[^1] = (n + 1).ToString();
+                    newFilename = string.Join('.', parts) + ".var";
+                }
+                else
+                {
+                    newFilename = stem + ".updated.var";
+                    _log("");
+                    _log("- Note: Could not find numeric version in filename. Using fallback name.");
+                }
+
+                var outDir = Path.Combine(sourceFile.DirectoryName!, UpdatedPackagesDir);
+                Directory.CreateDirectory(outDir);
+                outPath = Path.Combine(outDir, newFilename);
+
+                if (opts.DryRun)
+                {
+                    _log("");
+                    _log(new string('-', 50));
+                    _log("DRY RUN: no file was written. Would have created:");
+                    _log($"   {outPath}");
+                    return UpdateResult.Ok(null, totalReplacements, licenseUpdated);
+                }
+
+                if (File.Exists(outPath))
+                {
+                    var choice = opts.OnCollision?.Invoke(outPath) ?? CollisionChoice.Overwrite;
+                    switch (choice)
+                    {
+                        case CollisionChoice.Cancel:
+                            _log("");
+                            _log("Cancelled. No file was written.");
+                            return UpdateResult.Ok(null, totalReplacements, licenseUpdated);
+                        case CollisionChoice.NextFree:
+                            outPath = FindNextFreePath(outDir, stem);
+                            newFilename = Path.GetFileName(outPath);
+                            _log($"Using next free filename: {newFilename}");
+                            break;
+                        case CollisionChoice.Overwrite:
+                            _log($"Overwriting existing '{newFilename}'.");
+                            File.Delete(outPath);
+                            break;
+                    }
                 }
             }
 
@@ -243,7 +319,7 @@ public sealed class PackageUpdater
             // Regenerate the sidecar {newvar}.var.depend.txt that VaM's Package Builder
             // writes natively. It lists every dep with license/creator/link info so
             // end-users downloading the .var (e.g. from Mega) know what they need.
-            await WriteDependTextAsync(opts.SourceVarPath, outPath, ct);
+            await WriteDependTextAsync(opts.SourceVarPath, sidecarFallbackPath, outPath, ct);
 
             _log(new string('-', 50));
             _log("Success! Package created at:");
@@ -255,6 +331,24 @@ public sealed class PackageUpdater
         {
             try { Directory.Delete(tempDir, recursive: true); } catch { }
         }
+    }
+
+    /// <summary>
+    /// Builds a unique backup path inside <paramref name="backupDir"/> using a timestamp suffix.
+    /// Falls back to a counter disambiguator if two runs complete in the same second.
+    /// </summary>
+    private static string FindFreeBackupPath(string backupDir, string stem)
+    {
+        var timestamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+        var basePath = Path.Combine(backupDir, $"{stem}.{timestamp}{BackupExtension}");
+        if (!File.Exists(basePath)) return basePath;
+        for (var counter = 2; counter < 1000; counter++)
+        {
+            var candidate = Path.Combine(backupDir, $"{stem}.{timestamp}.{counter}{BackupExtension}");
+            if (!File.Exists(candidate)) return candidate;
+        }
+        // Extremely unlikely — 1000 backups in one second. Fall back to a guid.
+        return Path.Combine(backupDir, $"{stem}.{timestamp}.{Guid.NewGuid().ToString("N")[..8]}{BackupExtension}");
     }
 
     public static string FindNextFreePath(string outDir, string sourceStem)
@@ -308,7 +402,10 @@ public sealed class PackageUpdater
     /// creator/promotionalLink per dep. Swallows any failure — the sidecar is a
     /// nice-to-have, not critical for the .var itself.
     /// </summary>
-    private async Task WriteDependTextAsync(string sourceVarPath, string outVarPath, CancellationToken ct)
+    /// <param name="sourceVarPath">Original source .var path; used only to infer the AddonPackages folder.</param>
+    /// <param name="existingSidecarPath">Path to the pre-existing sidecar to use as a fallback data source
+    /// (in ReplaceInPlace mode this sits under updated_packages/backup/, not next to the source).</param>
+    private async Task WriteDependTextAsync(string sourceVarPath, string existingSidecarPath, string outVarPath, CancellationToken ct)
     {
         try
         {
@@ -317,13 +414,8 @@ public sealed class PackageUpdater
             if (!string.IsNullOrEmpty(addonPackagesFolder) && Directory.Exists(addonPackagesFolder))
                 index = new AddonPackagesIndex(addonPackagesFolder);
 
-            // If a .depend.txt already sits next to the source .var, pass it as a
-            // fallback data source — it has creator/link info for deps that may not
-            // be installed on this particular machine.
-            var existingSidecar = sourceVarPath + ".depend.txt";
-
             var writer = new DependTextWriter();
-            var wrote = await writer.WriteAsync(outVarPath, index, existingSidecar, ct);
+            var wrote = await writer.WriteAsync(outVarPath, index, existingSidecarPath, ct);
             if (wrote)
                 _log($"Wrote sidecar '{Path.GetFileName(outVarPath)}.depend.txt' with dependency list.");
         }

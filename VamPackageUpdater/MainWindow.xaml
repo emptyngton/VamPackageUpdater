@@ -344,6 +344,44 @@
             </Setter>
         </Style>
 
+        <Style TargetType="RadioButton">
+            <Setter Property="Foreground" Value="#e0e0e0"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Padding" Value="6,0,0,0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <StackPanel Orientation="Horizontal">
+                            <Grid Width="16" Height="16" VerticalAlignment="Center" SnapsToDevicePixels="True">
+                                <Ellipse x:Name="Box"
+                                         Fill="#1a1a1a"
+                                         Stroke="#5a5a5a"
+                                         StrokeThickness="1"/>
+                                <Ellipse x:Name="Dot"
+                                         Width="7" Height="7"
+                                         Fill="#e0e0e0"
+                                         Visibility="Collapsed"/>
+                            </Grid>
+                            <ContentPresenter Margin="{TemplateBinding Padding}"
+                                              VerticalAlignment="Center"
+                                              TextElement.Foreground="{TemplateBinding Foreground}"/>
+                        </StackPanel>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Dot" Property="Visibility" Value="Visible"/>
+                                <Setter TargetName="Box" Property="Fill" Value="#2a4a7a"/>
+                                <Setter TargetName="Box" Property="Stroke" Value="#5a7aaa"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Box" Property="Stroke" Value="#8a8a8a"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- GridSplitter -->
         <Style TargetType="GridSplitter">
             <Setter Property="Background" Value="#2a2a2a"/>
@@ -848,10 +886,20 @@
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
                 <TextBlock Grid.Row="0" Grid.Column="0" Text="Change license:"/>
                 <ComboBox Grid.Row="0" Grid.Column="1" x:Name="LicenseCombo"/>
-                <CheckBox Grid.Row="1" Grid.Column="1" x:Name="DryRunCheck"
+                <TextBlock Grid.Row="1" Grid.Column="0" Text="Output:" Margin="0,8,0,0"/>
+                <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Margin="0,8,0,0">
+                    <RadioButton x:Name="OutputModeIncrement" GroupName="OutputMode"
+                                 Content="Increment version" IsChecked="True"
+                                 ToolTip="Write the new .var with version+1 (e.g. Pkg.5 → Pkg.6) into updated_packages/"/>
+                    <RadioButton x:Name="OutputModeReplace" GroupName="OutputMode"
+                                 Content="Replace current (backup original)" Margin="16,0,0,0"
+                                 ToolTip="Overwrite the source .var in place. Original is moved to updated_packages/backup/ as .var.bak (invisible to VaM)."/>
+                </StackPanel>
+                <CheckBox Grid.Row="2" Grid.Column="1" x:Name="DryRunCheck"
                           Content="Preview changes only (dry run — don't write the .var)"
                           Margin="0,8,0,0"/>
             </Grid>
