@@ -12,6 +12,7 @@ public enum PluginCategory
     Texture,
     Pose,
     Asset,
+    Audio,
     Scene,
     Other
 }
@@ -28,6 +29,7 @@ public static class PluginCategoryExtensions
         PluginCategory.Texture => "Textures",
         PluginCategory.Pose => "Poses",
         PluginCategory.Asset => "Assets",
+        PluginCategory.Audio => "Audio",
         PluginCategory.Scene => "Scenes",
         PluginCategory.Reference => "Reference-only",
         _ => "Other"

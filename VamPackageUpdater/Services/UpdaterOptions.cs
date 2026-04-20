@@ -9,6 +9,7 @@ public sealed class UpdaterOptions
     public List<VoxtaResourceAttachment> VoxtaAttachments { get; set; } = new();
     public string? NewLicenseLine { get; set; }
     public bool DryRun { get; set; }
+    public OutputMode OutputMode { get; set; } = OutputMode.Increment;
     public Func<string, CollisionChoice>? OnCollision { get; set; }
 }
 
@@ -17,6 +18,15 @@ public enum CollisionChoice
     Overwrite,
     NextFree,
     Cancel
+}
+
+public enum OutputMode
+{
+    /// <summary>Write the new .var alongside the source with an incremented version suffix (default).</summary>
+    Increment,
+    /// <summary>Overwrite the source .var in place; move the original to updated_packages/backup/ with a
+    /// timestamped .var.bak extension so VaM's scanner (*.var only) ignores it.</summary>
+    ReplaceInPlace
 }
 
 public static class Licenses
