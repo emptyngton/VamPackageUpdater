@@ -88,6 +88,16 @@ public partial class MainWindow : Window
             g.NewVersion = "latest";
     }
 
+    private void RefsHyperlink_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Hyperlink link) return;
+        if (link.DataContext is not PluginReferenceGroup group) return;
+        if (group.OccurrenceCount == 0) return;
+
+        var dlg = new ReferenceOccurrencesDialog(group) { Owner = this };
+        dlg.ShowDialog();
+    }
+
     private void SetAllLatestButton_Click(object sender, RoutedEventArgs e)
     {
         foreach (var p in VisiblePlugins())

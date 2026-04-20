@@ -512,6 +512,8 @@
                                       Click="FilterTab_Click" Style="{StaticResource FilterTabStyle}"/>
                         <ToggleButton x:Name="TabAsset" Content="Assets" Tag="Asset"
                                       Click="FilterTab_Click" Style="{StaticResource FilterTabStyle}"/>
+                        <ToggleButton x:Name="TabAudio" Content="Audio" Tag="Audio"
+                                      Click="FilterTab_Click" Style="{StaticResource FilterTabStyle}"/>
                         <ToggleButton x:Name="TabOther" Content="Other" Tag="Other"
                                       Click="FilterTab_Click" Style="{StaticResource FilterTabStyle}"/>
                     </StackPanel>
@@ -521,7 +523,31 @@
                     <DataGrid.Columns>
                         <DataGridTextColumn Header="Plugin" Binding="{Binding PluginId}" IsReadOnly="True" Width="2*"/>
                         <DataGridTextColumn Header="Current" Binding="{Binding CurrentVersionsDisplay}" IsReadOnly="True" Width="90"/>
-                        <DataGridTextColumn Header="Refs" Binding="{Binding OccurrenceCount}" IsReadOnly="True" Width="55"/>
+                        <DataGridTemplateColumn Header="Refs" Width="55" SortMemberPath="OccurrenceCount" IsReadOnly="True">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center">
+                                        <Hyperlink Click="RefsHyperlink_Click"
+                                                   DataContext="{Binding}"
+                                                   Foreground="#9CDCFE"
+                                                   TextDecorations="{x:Null}"
+                                                   ToolTip="Click to view occurrences">
+                                            <Hyperlink.Style>
+                                                <Style TargetType="Hyperlink">
+                                                    <Style.Triggers>
+                                                        <Trigger Property="IsMouseOver" Value="True">
+                                                            <Setter Property="TextDecorations" Value="Underline"/>
+                                                            <Setter Property="Foreground" Value="#FFC107"/>
+                                                        </Trigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Hyperlink.Style>
+                                            <Run Text="{Binding OccurrenceCount, Mode=OneWay}"/>
+                                        </Hyperlink>
+                                    </TextBlock>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
                         <DataGridTemplateColumn Header="New Version" Width="200" SortMemberPath="NewVersion">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
