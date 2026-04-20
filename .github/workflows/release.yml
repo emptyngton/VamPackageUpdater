@@ -8,6 +8,13 @@ on:
 permissions:
   contents: write
 
+# Opt into Node.js 24 for JavaScript actions. GitHub's runner forces this by
+# default starting 2026-06-02; setting it here silences the deprecation warning
+# and surfaces any compatibility issues now instead of on the forced-migration
+# date. Remove this once all actions we use run on Node 24 natively.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build-and-release:
     runs-on: windows-latest
