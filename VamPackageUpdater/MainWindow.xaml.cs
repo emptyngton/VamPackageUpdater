@@ -39,6 +39,7 @@ public partial class MainWindow : Window
     private Paragraph _logParagraph = null!;
     private PluginCategory? _activeFilter;
     private ICollectionView _pluginsView = null!;
+    private AddonPackagesIndex? _addonIndex;
 
     public MainWindow()
     {
@@ -68,8 +69,8 @@ public partial class MainWindow : Window
     {
         var dialog = new OpenFileDialog
         {
-            Title = "Select a .var package",
-            Filter = "Virt-a-Mate Packages (*.var)|*.var|All files (*.*)|*.*"
+            Title = "Select a .var package or a scene .json",
+            Filter = "Packages and scenes (*.var;*.json)|*.var;*.json|Virt-a-Mate Packages (*.var)|*.var|Scenes (*.json)|*.json|All files (*.*)|*.*"
         };
 
         if (dialog.ShowDialog() == true)
@@ -82,10 +83,33 @@ public partial class MainWindow : Window
 
     private async void RescanButton_Click(object sender, RoutedEventArgs e) => await ScanAsync();
 
-    private void SetRowLatestButton_Click(object sender, RoutedEventArgs e)
+    private void SetRowMinButton_Click(object sender, RoutedEventArgs e)
     {
         if (sender is Button btn && btn.Tag is PluginReferenceGroup g)
-            g.NewVersion = "latest";
+            SetMinimumVersion(g);
+    }
+
+    /// <summary>
+    /// "minN" with N = the newest version installed in AddonPackages (the one the scene was tested with), or the
+    /// newest version the scene already references when none is installed. Returns false when neither is known.
+    /// </summary>
+    private bool SetMinimumVersion(PluginReferenceGroup g)
+    {
+        var version = _addonIndex?.HighestInstalledVersion(g.PluginId) ??
+            g.CurrentVersions
+                .Select(v => v.StartsWith("min", StringComparison.OrdinalIgnoreCase) ? v[3..] : v)
+                .Select(v => int.TryParse(v, out var n) ? n : (int?)null)
+                .Max();
+        if (version is not int n) return false;
+        g.NewVersion = $"min{n}";
+        return true;
+    }
+
+    private void SetAllMinButton_Click(object sender, RoutedEventArgs e)
+    {
+        var unknown = VisiblePlugins().Where(p => !SetMinimumVersion(p)).Select(p => p.PluginId).ToList();
+        if (unknown.Count > 0)
+            Log($"No installed or referenced version to use as the minimum for: {string.Join(", ", unknown)}. Type a version for those by hand.", ErrorBrush);
     }
 
     private void RefsHyperlink_Click(object sender, RoutedEventArgs e)
@@ -96,12 +120,6 @@ public partial class MainWindow : Window
 
         var dlg = new ReferenceOccurrencesDialog(group) { Owner = this };
         dlg.ShowDialog();
-    }
-
-    private void SetAllLatestButton_Click(object sender, RoutedEventArgs e)
-    {
-        foreach (var p in VisiblePlugins())
-            p.NewVersion = "latest";
     }
 
     private void ClearAllButton_Click(object sender, RoutedEventArgs e)
@@ -202,13 +220,22 @@ public partial class MainWindow : Window
         _plugins.Clear();
         _voxtaResources.Clear();
         _hubDeps.Clear();
+        _addonIndex = null;
         RescanButton.IsEnabled = false;
         UpdateButton.IsEnabled = false;
-        SetAllLatestButton.IsEnabled = false;
+        SetAllMinButton.IsEnabled = false;
         ClearAllButton.IsEnabled = false;
         ClearAllAttachmentsButton.IsEnabled = false;
         DownloadAllMissingButton.IsEnabled = false;
         LogParts(("Scanning ", SubduedBrush), ($"'{Path.GetFileName(FilePathBox.Text)}'", PathBrush), ("...", SubduedBrush));
+
+        var looseScene = LooseSceneUpdater.IsLooseScene(FilePathBox.Text);
+        ApplySourceKind(looseScene);
+        if (looseScene)
+        {
+            await ScanLooseSceneAsync();
+            return;
+        }
 
         try
         {
@@ -230,8 +257,8 @@ public partial class MainWindow : Window
             var addonPackagesFolder = AddonPackagesIndex.InferAddonPackagesFolder(FilePathBox.Text);
             if (!string.IsNullOrEmpty(addonPackagesFolder))
             {
-                var index = await Task.Run(() => new AddonPackagesIndex(addonPackagesFolder));
-                index.AnnotateStatus(depResults);
+                _addonIndex = await Task.Run(() => new AddonPackagesIndex(addonPackagesFolder));
+                _addonIndex.AnnotateStatus(depResults);
             }
 
             // Ask the Hub upfront about availability for each dep:
@@ -253,7 +280,7 @@ public partial class MainWindow : Window
                 d.Status == HubDependencyStatus.UpdateAvailable);
 
             UpdateButton.IsEnabled = hasPlugins || hasVoxta;
-            SetAllLatestButton.IsEnabled = hasPlugins;
+            SetAllMinButton.IsEnabled = hasPlugins;
             ClearAllButton.IsEnabled = hasPlugins;
             ClearAllAttachmentsButton.IsEnabled = hasVoxta;
             DownloadAllMissingButton.IsEnabled = hasActionableDeps;
@@ -275,11 +302,60 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// A loose scene has no meta.json, no bundled resources and no version to bump: only its plugin references
+    /// can change, rewritten in place.
+    /// </summary>
+    private async Task ScanLooseSceneAsync()
+    {
+        try
+        {
+            foreach (var g in await _scanner.ScanAsync(FilePathBox.Text))
+                _plugins.Add(g);
+
+            // Only used to fill in minimum versions: a loose scene has no dependency list to check.
+            var addonPackagesFolder = AddonPackagesIndex.InferAddonPackagesFolder(FilePathBox.Text);
+            if (!string.IsNullOrEmpty(addonPackagesFolder))
+                _addonIndex = await Task.Run(() => new AddonPackagesIndex(addonPackagesFolder));
+
+            LogPluginScanResults();
+
+            var hasPlugins = _plugins.Count > 0;
+            UpdateButton.IsEnabled = hasPlugins;
+            SetAllMinButton.IsEnabled = hasPlugins;
+            ClearAllButton.IsEnabled = hasPlugins;
+            RescanButton.IsEnabled = true;
+            UpdateTabCounts();
+            UpdateSectionTabLabels();
+        }
+        catch (Exception ex)
+        {
+            Log($"Scan failed: {ex.Message}", ErrorBrush);
+            UpdateButton.IsEnabled = false;
+            RescanButton.IsEnabled = true;
+        }
+    }
+
+    private void ApplySourceKind(bool looseScene)
+    {
+        if (looseScene)
+        {
+            MetaPanel.Visibility = Visibility.Collapsed;
+            SwitchSection("Plugins");
+        }
+        SectionTabVoxta.IsEnabled = !looseScene;
+        SectionTabHubDeps.IsEnabled = !looseScene;
+        LicenseCombo.IsEnabled = !looseScene;
+        OutputModeIncrement.IsEnabled = !looseScene;
+        OutputModeReplace.IsEnabled = !looseScene;
+        UpdateButton.Content = looseScene ? "Update Scene" : "Update Package";
+    }
+
     private void LogPluginScanResults()
     {
         if (_plugins.Count == 0)
         {
-            Log("No plugin references found in the package.", SubduedBrush);
+            Log("No plugin references found.", SubduedBrush);
             return;
         }
 
@@ -323,7 +399,7 @@ public partial class MainWindow : Window
         }
 
         Log("");
-        Log("Edit the New Version column to queue updates, then click Update Package.", SubduedBrush);
+        Log($"Edit the New Version column to queue updates, then click {UpdateButton.Content}.", SubduedBrush);
     }
 
     private void LogVoxtaScanResults()
@@ -373,11 +449,12 @@ public partial class MainWindow : Window
     {
         // Deps to query:
         //   - anything Missing (classify: Missing-downloadable vs NotOnHub)
-        //   - .latest refs that are Installed (check for newer version on Hub)
+        //   - .latest / .minN refs that are Installed (check for newer version on Hub)
         var toQuery = deps
             .Where(d =>
                 d.Status == HubDependencyStatus.Missing ||
-                (d.Status == HubDependencyStatus.Installed && AddonPackagesIndex.IsLatestRef(d.Name)))
+                (d.Status == HubDependencyStatus.Installed &&
+                 (AddonPackagesIndex.IsLatestRef(d.Name) || AddonPackagesIndex.ParseMinVersion(d.Name) is not null)))
             .ToList();
 
         if (toQuery.Count == 0) return;
@@ -386,7 +463,7 @@ public partial class MainWindow : Window
         try
         {
             using var hub = new HubClient();
-            lookup = await hub.FindPackagesAsync(toQuery.Select(d => d.Name));
+            lookup = await hub.FindPackagesAsync(toQuery.Select(d => AddonPackagesIndex.HubQueryName(d.Name)).Distinct());
         }
         catch (Exception ex)
         {
@@ -397,9 +474,10 @@ public partial class MainWindow : Window
         foreach (var dep in toQuery)
         {
             // Record what the scene asks for, so the UI can show both sides on mismatch.
-            dep.RequestedVersion = AddonPackagesIndex.ParseRequestedVersion(dep.Name);
+            var minVersion = AddonPackagesIndex.ParseMinVersion(dep.Name);
+            dep.RequestedVersion = AddonPackagesIndex.ParseRequestedVersion(dep.Name) ?? minVersion;
 
-            if (!lookup.TryGetValue(dep.Name, out var info) || !info.HasUsableDownloadUrl)
+            if (!lookup.TryGetValue(AddonPackagesIndex.HubQueryName(dep.Name), out var info) || !info.HasUsableDownloadUrl)
             {
                 // Hub won't serve this. Only mark NotOnHub if not locally installed —
                 // an installed package we can't verify on Hub is still fine to use.
@@ -418,17 +496,18 @@ public partial class MainWindow : Window
             // Exact-version ref that Hub substitutes with a different version (e.g. scene
             // wants SPQR.Footsteps.3 but Hub only has .2). Silently downloading .2 wouldn't
             // satisfy VaM's .3 ref — flag it so the user can resolve manually instead.
+            // A .minN ref is only unsatisfiable when Hub's newest is still below N.
             if (dep.Status == HubDependencyStatus.Missing &&
                 dep.RequestedVersion is int requestedV &&
                 hubVersion is int hubSubV &&
-                hubSubV != requestedV)
+                (minVersion is null ? hubSubV != requestedV : hubSubV < requestedV))
             {
                 dep.Status = HubDependencyStatus.VersionMismatch;
                 continue;
             }
 
             if (dep.Status == HubDependencyStatus.Installed &&
-                AddonPackagesIndex.IsLatestRef(dep.Name) &&
+                (AddonPackagesIndex.IsLatestRef(dep.Name) || minVersion is not null) &&
                 dep.InstalledVersion is int installedV &&
                 hubVersion is int hubV &&
                 hubV > installedV)
@@ -484,7 +563,7 @@ public partial class MainWindow : Window
                     (" — Hub only has v", SubduedBrush),
                     (d.HubLatestVersion?.ToString() ?? "?", NumberBrush));
             }
-            Log("Scene asks for specific versions that Hub doesn't serve. Either grab the exact version from the creator's Patreon, or use the Plugin references tab to rewrite those refs to .latest.", SubduedBrush);
+            Log("Scene asks for versions that Hub doesn't serve. Either grab them from the creator's Patreon, or use the Plugin references tab to set a minimum version Hub has.", SubduedBrush);
         }
     }
 
@@ -707,12 +786,13 @@ public partial class MainWindow : Window
 
             var requested = dep.RequestedVersion?.ToString() ?? "?";
             var hubHas = dep.HubLatestVersion?.ToString() ?? "?";
+            var asks = dep.IsMinimumRef ? $"v{requested} or newer" : $"v{requested} exactly";
             var confirm = MessageBox.Show(
                 this,
-                $"Scene asks for {dep.PackageBaseName} v{requested} exactly, but Hub only serves v{hubHas}.\n\n" +
+                $"Scene asks for {dep.PackageBaseName} {asks}, but Hub only serves v{hubHas}.\n\n" +
                 $"Install v{hubHas} anyway?\n\n" +
-                $"Note: this won't satisfy the scene's v{requested} reference — VaM will still complain about the missing exact version. " +
-                $"To actually fix the scene, either grab v{requested} manually from the creator's Patreon, or rewrite the ref to .latest on the Plugin references tab.",
+                $"Note: this won't satisfy the scene's v{requested} reference — VaM will still report it as missing. " +
+                $"To actually fix the scene, either grab v{requested} manually from the creator's Patreon, or set a minimum version Hub has on the Plugin references tab.",
                 "Install anyway?",
                 MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
             if (confirm != MessageBoxResult.Yes) return;
@@ -833,7 +913,7 @@ public partial class MainWindow : Window
                     ("     ", DefaultBrush),
                     ("(scene still references v", SubduedBrush),
                     (dep.RequestedVersion?.ToString() ?? "?", NumberBrush),
-                    (" — update the ref to .latest or grab v", SubduedBrush),
+                    (" — set a minimum version Hub has, or grab v", SubduedBrush),
                     (dep.RequestedVersion?.ToString() ?? "?", NumberBrush),
                     (" manually to fully resolve)", SubduedBrush));
             }
@@ -1110,7 +1190,7 @@ public partial class MainWindow : Window
 
         UpdateButton.IsEnabled = false;
         RescanButton.IsEnabled = false;
-        SetAllLatestButton.IsEnabled = false;
+        SetAllMinButton.IsEnabled = false;
         ClearAllButton.IsEnabled = false;
         LogClear();
 
@@ -1137,11 +1217,11 @@ public partial class MainWindow : Window
             OnCollision = PromptCollision
         };
 
-        var updater = new PackageUpdater(s => Log(s));
-
         try
         {
-            var result = await updater.RunAsync(options);
+            var result = LooseSceneUpdater.IsLooseScene(FilePathBox.Text)
+                ? await new LooseSceneUpdater(s => Log(s)).RunAsync(FilePathBox.Text, updates, options.DryRun)
+                : await new PackageUpdater(s => Log(s)).RunAsync(options);
             if (!result.Success)
                 Log($"Error: {result.Error}", ErrorBrush);
         }
@@ -1154,7 +1234,7 @@ public partial class MainWindow : Window
             var hasPlugins = _plugins.Count > 0;
             var hasVoxta = _voxtaResources.Count > 0;
             UpdateButton.IsEnabled = hasPlugins || hasVoxta;
-            SetAllLatestButton.IsEnabled = hasPlugins;
+            SetAllMinButton.IsEnabled = hasPlugins;
             ClearAllButton.IsEnabled = hasPlugins;
             ClearAllAttachmentsButton.IsEnabled = hasVoxta;
             RescanButton.IsEnabled = true;

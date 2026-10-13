@@ -7,9 +7,12 @@ namespace VamPackageUpdater.Services;
 
 public sealed class PluginReferenceScanner
 {
+    // A reference is a whole JSON string or the part before ":/" in one: "Author.Package.N:/Custom/..." or a
+    // meta.json key "Author.Package.N". Author and package names may hold "-", "[", "]", "!", "(", ")"
+    // (e.g. "BooMoon.[Clothing]_Lips_Layer", "Jackaroo.Eyes_Lips_Nails!"), so only separators are excluded.
     private static readonly Regex PluginRefPattern = new(
-        @"\b(?<id>[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*)\.(?<version>\d+|latest)\b",
-        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        @"(?<=^|[\s""'])(?<id>[^\s""'/\\:.,]+\.[^\s""'/\\:.,]+)\.(?<version>\d+|latest|min\d+)(?=:/|"")",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Multiline);
 
     private static readonly HashSet<string> ScannableExtensions =
         new(StringComparer.OrdinalIgnoreCase) { ".json", ".vap", ".vam", ".vaj", ".vab" };
@@ -21,11 +24,17 @@ public sealed class PluginReferenceScanner
     public Task<List<PluginReferenceGroup>> ScanAsync(string varPath, CancellationToken ct = default) =>
         Task.Run(() => Scan(varPath, ct), ct);
 
-    public List<PluginReferenceGroup> Scan(string varPath, CancellationToken ct = default)
+    public List<PluginReferenceGroup> Scan(string path, CancellationToken ct = default)
     {
         var groups = new Dictionary<string, PluginReferenceGroup>(StringComparer.Ordinal);
 
-        using var archive = ZipFile.OpenRead(varPath);
+        if (LooseSceneUpdater.IsLooseScene(path))
+        {
+            ScanContent(Path.GetFileName(path), File.ReadAllText(path), groups);
+            return Sorted(groups);
+        }
+
+        using var archive = ZipFile.OpenRead(path);
         foreach (var entry in archive.Entries)
         {
             ct.ThrowIfCancellationRequested();
@@ -44,37 +53,45 @@ public sealed class PluginReferenceScanner
                 continue;
             }
 
-            var matches = PluginRefPattern.Matches(content);
-            if (matches.Count == 0) continue;
-
-            var lineStarts = BuildLineStarts(content);
-            foreach (Match m in matches)
-            {
-                var id = m.Groups["id"].Value;
-                var version = m.Groups["version"].Value;
-                var line = LineFromOffset(lineStarts, m.Index);
-                var category = ClassifyAt(content, m.Index + m.Length);
-                var snippet = BuildSnippet(content, lineStarts, m.Index, m.Length, line);
-
-                if (!groups.TryGetValue(id, out var group))
-                {
-                    group = new PluginReferenceGroup(id);
-                    groups[id] = group;
-                }
-                group.AddOccurrence(new PluginReferenceOccurrence(
-                    File: entry.FullName,
-                    Line: line,
-                    Column: snippet.MatchColumn,
-                    MatchLength: m.Length,
-                    Version: version,
-                    Category: category,
-                    SnippetLines: snippet.Lines,
-                    SnippetMatchLineIndex: snippet.MatchLineIndex,
-                    SnippetStartLine: snippet.StartLine));
-            }
+            ScanContent(entry.FullName, content, groups);
         }
 
-        return groups.Values.OrderBy(g => g.PluginId, StringComparer.Ordinal).ToList();
+        return Sorted(groups);
+    }
+
+    private static List<PluginReferenceGroup> Sorted(Dictionary<string, PluginReferenceGroup> groups) =>
+        groups.Values.OrderBy(g => g.PluginId, StringComparer.Ordinal).ToList();
+
+    private static void ScanContent(string fileName, string content, Dictionary<string, PluginReferenceGroup> groups)
+    {
+        var matches = PluginRefPattern.Matches(content);
+        if (matches.Count == 0) return;
+
+        var lineStarts = BuildLineStarts(content);
+        foreach (Match m in matches)
+        {
+            var id = m.Groups["id"].Value;
+            var version = m.Groups["version"].Value;
+            var line = LineFromOffset(lineStarts, m.Index);
+            var category = ClassifyAt(content, m.Index + m.Length);
+            var snippet = BuildSnippet(content, lineStarts, m.Index, m.Length, line);
+
+            if (!groups.TryGetValue(id, out var group))
+            {
+                group = new PluginReferenceGroup(id);
+                groups[id] = group;
+            }
+            group.AddOccurrence(new PluginReferenceOccurrence(
+                File: fileName,
+                Line: line,
+                Column: snippet.MatchColumn,
+                MatchLength: m.Length,
+                Version: version,
+                Category: category,
+                SnippetLines: snippet.Lines,
+                SnippetMatchLineIndex: snippet.MatchLineIndex,
+                SnippetStartLine: snippet.StartLine));
+        }
     }
 
     private static PluginCategory ClassifyAt(string content, int afterMatchIdx)

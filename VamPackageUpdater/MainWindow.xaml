@@ -448,7 +448,7 @@
             <RowDefinition Height="2*" MinHeight="160"/>
         </Grid.RowDefinitions>
 
-        <TextBlock Grid.Row="0" Text="1. Select .var package" FontWeight="Bold" Margin="0,0,0,4"/>
+        <TextBlock Grid.Row="0" Text="1. Select a .var package or a scene .json" FontWeight="Bold" Margin="0,0,0,4"/>
         <Grid Grid.Row="1" Margin="0,0,0,10">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
@@ -525,8 +525,9 @@
                 </Grid.RowDefinitions>
 
                 <StackPanel Grid.Row="0" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,6,0,2">
-                    <Button Content="Set all to latest" Click="SetAllLatestButton_Click"
-                            IsEnabled="False" x:Name="SetAllLatestButton" Margin="0,0,6,0" Padding="8,3"/>
+                    <Button Content="Set all to this version or newer" Click="SetAllMinButton_Click"
+                            IsEnabled="False" x:Name="SetAllMinButton" Margin="0,0,6,0" Padding="8,3"
+                            ToolTip="Each reference becomes &quot;this version or newer&quot;, this version being the one installed here. Players with an older one are asked to download the newest from the Hub."/>
                     <Button Content="Clear all" Click="ClearAllButton_Click"
                             IsEnabled="False" x:Name="ClearAllButton" Padding="8,3"/>
                 </StackPanel>
@@ -586,7 +587,7 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="New Version" Width="200" SortMemberPath="NewVersion">
+                        <DataGridTemplateColumn Header="New Version" Width="240" SortMemberPath="NewVersion">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <Grid Margin="4,3">
@@ -606,11 +607,12 @@
                                                  FontFamily="Cascadia Mono, Consolas"
                                                  GotFocus="VersionTextBox_GotFocus"
                                                  PreviewMouseLeftButtonDown="VersionTextBox_PreviewMouseLeftButtonDown"/>
-                                        <Button Grid.Column="1" Content="latest"
-                                                Click="SetRowLatestButton_Click"
+                                        <Button Grid.Column="1" Content="or newer"
+                                                Click="SetRowMinButton_Click"
                                                 Tag="{Binding}"
                                                 Margin="4,0,0,0" Padding="6,2"
-                                                FontSize="11"/>
+                                                FontSize="11"
+                                                ToolTip="The version installed here, or any newer one"/>
                                     </Grid>
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
@@ -900,7 +902,7 @@
                                  ToolTip="Overwrite the source .var in place. Original is moved to updated_packages/backup/ as .var.bak (invisible to VaM)."/>
                 </StackPanel>
                 <CheckBox Grid.Row="2" Grid.Column="1" x:Name="DryRunCheck"
-                          Content="Preview changes only (dry run — don't write the .var)"
+                          Content="Preview changes only (dry run, nothing is written)"
                           Margin="0,8,0,0"/>
             </Grid>
 

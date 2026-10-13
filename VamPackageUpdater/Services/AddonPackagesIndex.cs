@@ -9,12 +9,10 @@ namespace VamPackageUpdater.Services;
 /// "is this dependency already installed?" for each entry in a scene's
 /// meta.json dependencies tree.
 ///
-/// Dependency names come in two forms:
+/// Dependency names come in three forms:
 ///   - "Author.Package.N"        - exact version match required
 ///   - "Author.Package.latest"   - any installed version satisfies
-///
-/// A third edge case we tolerate:
-///   - "Author.Package.min.N"    - any version >= N satisfies (rare, VaM syntax)
+///   - "Author.Package.minN"     - any version >= N satisfies (VaM matches "\.min([0-9]+)$")
 /// </summary>
 public sealed class AddonPackagesIndex
 {
@@ -112,7 +110,7 @@ public sealed class AddonPackagesIndex
     }
 
     /// <summary>
-    /// Parse a dependency name like "Author.Package.287", "Author.Package.latest", or "Author.Package.min.5".
+    /// Parse a dependency name like "Author.Package.287", "Author.Package.latest", or "Author.Package.min5".
     /// Returns false if the name doesn't look like a valid VaM package reference.
     /// </summary>
     private static bool TryParseDepName(string name, out string pkgKey, out int version, out bool isLatest, out bool isMinVersion)
@@ -135,16 +133,16 @@ public sealed class AddonPackagesIndex
             return !string.IsNullOrWhiteSpace(pkgKey);
         }
 
+        if (last.Length > 3 && last.StartsWith("min", StringComparison.OrdinalIgnoreCase) &&
+            last.Skip(3).All(char.IsAsciiDigit) && int.TryParse(last[3..], out version))
+        {
+            isMinVersion = true;
+            pkgKey = string.Join('.', parts, 0, parts.Length - 1);
+            return !string.IsNullOrWhiteSpace(pkgKey);
+        }
+
         if (int.TryParse(last, out version))
         {
-            // Check for "...min.N" shape (VaM syntax for "at least N").
-            if (parts.Length >= 4 && string.Equals(parts[^2], "min", StringComparison.OrdinalIgnoreCase))
-            {
-                isMinVersion = true;
-                pkgKey = string.Join('.', parts, 0, parts.Length - 2);
-                return !string.IsNullOrWhiteSpace(pkgKey);
-            }
-
             pkgKey = string.Join('.', parts, 0, parts.Length - 1);
             return !string.IsNullOrWhiteSpace(pkgKey);
         }
@@ -155,7 +153,7 @@ public sealed class AddonPackagesIndex
     /// <summary>
     /// Resolve a dependency reference ("Author.Package.3", "Author.Package.latest", etc.)
     /// to an absolute .var path in this AddonPackages folder. For .latest we pick the
-    /// highest installed version; for .min.N we pick the highest installed that's >= N.
+    /// highest installed version; for .minN we pick the highest installed that's >= N.
     /// Returns null if nothing satisfies the ref.
     /// </summary>
     public string? TryGetInstalledVarPath(string depName)
@@ -184,9 +182,24 @@ public sealed class AddonPackagesIndex
         !string.IsNullOrEmpty(depName) &&
         depName.EndsWith(".latest", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>The N of a "Author.Package.minN" reference; null for any other form.</summary>
+    public static int? ParseMinVersion(string depName) =>
+        TryParseDepName(depName, out _, out var v, out _, out var isMin) && isMin ? v : null;
+
+    /// <summary>
+    /// The name to ask the Hub for. The Hub resolves ".latest" to its newest file; a ".minN" ref is asked
+    /// for the same way and its version is compared against N afterwards.
+    /// </summary>
+    public static string HubQueryName(string depName) =>
+        TryParseDepName(depName, out var pkgKey, out _, out _, out var isMin) && isMin ? $"{pkgKey}.latest" : depName;
+
+    /// <summary>Highest installed version of "Author.Package", or null when none is installed.</summary>
+    public int? HighestInstalledVersion(string pkgKey) =>
+        _installedByPackage.TryGetValue(pkgKey, out var versions) && versions.Count > 0 ? versions.Max() : null;
+
     /// <summary>
     /// Parse the requested version from a dependency reference like "Author.Package.3" → 3.
-    /// Returns null for .latest / .min.N / malformed refs.
+    /// Returns null for .latest / .minN / malformed refs.
     /// </summary>
     public static int? ParseRequestedVersion(string depName)
     {
@@ -199,7 +212,7 @@ public sealed class AddonPackagesIndex
     /// Split a dep reference into its package-base and version-label parts.
     /// Example: "AcidBubbles.Timeline.latest" → ("AcidBubbles.Timeline", "latest").
     /// Example: "SPQR.Footsteps.3"            → ("SPQR.Footsteps", "3").
-    /// Example: "Author.Package.min.5"        → ("Author.Package", "min.5").
+    /// Example: "Author.Package.min5"         → ("Author.Package", "min5").
     /// Falls back to (name, "") for names we can't parse.
     /// </summary>
     public static (string PackageBase, string VersionLabel) SplitNameParts(string depName)
@@ -208,7 +221,7 @@ public sealed class AddonPackagesIndex
             return (depName, "");
 
         var label = isLatest ? "latest"
-            : isMin ? $"min.{version}"
+            : isMin ? $"min{version}"
             : version.ToString();
         return (pkgKey, label);
     }
@@ -228,8 +241,9 @@ public sealed class AddonPackagesIndex
     /// <summary>
     /// Best guess at the VaM AddonPackages folder based on where the loaded .var lives.
     /// If the .var sits directly inside a folder named "AddonPackages" (case-insensitive),
-    /// that folder is returned. Otherwise the parent directory is returned as a fallback
-    /// (user may need to override via a picker).
+    /// that folder is returned. A loose scene under Saves\scene has it as a sibling of Saves, so an
+    /// ancestor holding an "AddonPackages" folder counts too. Otherwise the parent directory is
+    /// returned as a fallback (user may need to override via a picker).
     /// </summary>
     public static string? InferAddonPackagesFolder(string loadedVarPath)
     {
@@ -238,6 +252,9 @@ public sealed class AddonPackagesIndex
         {
             if (string.Equals(dir.Name, "AddonPackages", StringComparison.OrdinalIgnoreCase))
                 return dir.FullName;
+            var sibling = Path.Combine(dir.FullName, "AddonPackages");
+            if (Directory.Exists(sibling))
+                return sibling;
             dir = dir.Parent;
         }
         return Path.GetDirectoryName(loadedVarPath);

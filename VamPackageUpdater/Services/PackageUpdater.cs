@@ -1,6 +1,5 @@
 using System.IO;
 using System.IO.Compression;
-using System.Text.RegularExpressions;
 using VamPackageUpdater.Models;
 
 namespace VamPackageUpdater.Services;
@@ -35,22 +34,16 @@ public sealed class PackageUpdater
         if (opts.PluginUpdates.Count == 0 && opts.NewLicenseLine is null && opts.VoxtaAttachments.Count == 0)
             return UpdateResult.Fail("Nothing to do — no plugin updates, no license change, no Voxta attachments.");
 
-        var patterns = opts.PluginUpdates
-            .Where(u => !string.IsNullOrWhiteSpace(u.NewVersion))
-            .Select(u => new PluginPattern(
-                u,
-                new Regex($@"{Regex.Escape(u.PluginId)}\.(?:\d+|latest)\b", RegexOptions.IgnoreCase),
-                $"{u.PluginId}.{u.NewVersion.Trim()}"))
-            .ToList();
+        var rewriter = new PluginReferenceRewriter(opts.PluginUpdates);
 
         _log($"Starting update for: {Path.GetFileName(opts.SourceVarPath)}");
-        if (patterns.Count == 0)
+        if (rewriter.IsEmpty)
             _log("No plugin updates queued.");
         else
         {
-            _log($"Plugin updates queued: {patterns.Count}");
-            foreach (var p in patterns)
-                _log($"  - {p.Update.PluginId}  ->  {p.Update.NewVersion}");
+            _log($"Plugin updates queued: {rewriter.Updates.Count}");
+            foreach (var u in rewriter.Updates)
+                _log($"  - {u.PluginId}  ->  {u.NewVersion}");
         }
         _log(opts.NewLicenseLine is null
             ? "License will not be changed."
@@ -104,28 +97,15 @@ public sealed class PackageUpdater
             }
 
             var metaJsonChangedByRegex = false;
-            if (patterns.Count > 0)
+            if (!rewriter.IsEmpty)
             {
                 foreach (var file in EnumerateScannableFiles(tempDir))
                 {
                     ct.ThrowIfCancellationRequested();
-                    var text = File.ReadAllText(file);
-                    var changed = false;
+                    var (text, count) = rewriter.Rewrite(File.ReadAllText(file), perPluginCounts);
+                    totalReplacements += count;
 
-                    foreach (var p in patterns)
-                    {
-                        var (replaced, count) = ReplaceAll(p.Regex, text, p.Replacement);
-                        if (count > 0)
-                        {
-                            text = replaced;
-                            changed = true;
-                            totalReplacements += count;
-                            perPluginCounts[p.Update.PluginId] =
-                                perPluginCounts.GetValueOrDefault(p.Update.PluginId) + count;
-                        }
-                    }
-
-                    if (changed)
+                    if (count > 0)
                     {
                         File.WriteAllText(file, text);
                         var rel = Path.GetRelativePath(tempDir, file);
@@ -376,13 +356,6 @@ public sealed class PackageUpdater
         }
     }
 
-    private static (string Text, int Count) ReplaceAll(Regex pattern, string input, string replacement)
-    {
-        var count = 0;
-        var result = pattern.Replace(input, m => { count++; return replacement; });
-        return (result, count);
-    }
-
     private static void ZipFromDirectory(string sourceDir, string destZip)
     {
         using var archive = ZipFile.Open(destZip, ZipArchiveMode.Create);
@@ -393,8 +366,6 @@ public sealed class PackageUpdater
             archive.CreateEntryFromFile(file, rel, CompressionLevel.Optimal);
         }
     }
-
-    private sealed record PluginPattern(Models.PluginUpdate Update, Regex Regex, string Replacement);
 
     /// <summary>
     /// Write the sidecar "{outPath}.depend.txt" listing every dep of the new .var.
