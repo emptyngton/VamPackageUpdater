@@ -7,9 +7,12 @@ namespace VamPackageUpdater.Services;
 
 public sealed class PluginReferenceScanner
 {
+    // A reference is a whole JSON string or the part before ":/" in one: "Author.Package.N:/Custom/..." or a
+    // meta.json key "Author.Package.N". Author and package names may hold "-", "[", "]", "!", "(", ")"
+    // (e.g. "BooMoon.[Clothing]_Lips_Layer", "Jackaroo.Eyes_Lips_Nails!"), so only separators are excluded.
     private static readonly Regex PluginRefPattern = new(
-        @"\b(?<id>[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*)\.(?<version>\d+|latest|min\d+)\b",
-        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        @"(?<=^|[\s""'])(?<id>[^\s""'/\\:.,]+\.[^\s""'/\\:.,]+)\.(?<version>\d+|latest|min\d+)(?=:/|"")",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Multiline);
 
     private static readonly HashSet<string> ScannableExtensions =
         new(StringComparer.OrdinalIgnoreCase) { ".json", ".vap", ".vam", ".vaj", ".vab" };
