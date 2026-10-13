@@ -448,7 +448,7 @@
             <RowDefinition Height="2*" MinHeight="160"/>
         </Grid.RowDefinitions>
 
-        <TextBlock Grid.Row="0" Text="1. Select .var package" FontWeight="Bold" Margin="0,0,0,4"/>
+        <TextBlock Grid.Row="0" Text="1. Select a .var package or a scene .json" FontWeight="Bold" Margin="0,0,0,4"/>
         <Grid Grid.Row="1" Margin="0,0,0,10">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
@@ -900,7 +900,7 @@
                                  ToolTip="Overwrite the source .var in place. Original is moved to updated_packages/backup/ as .var.bak (invisible to VaM)."/>
                 </StackPanel>
                 <CheckBox Grid.Row="2" Grid.Column="1" x:Name="DryRunCheck"
-                          Content="Preview changes only (dry run — don't write the .var)"
+                          Content="Preview changes only (dry run, nothing is written)"
                           Margin="0,8,0,0"/>
             </Grid>
 

@@ -68,8 +68,8 @@ public partial class MainWindow : Window
     {
         var dialog = new OpenFileDialog
         {
-            Title = "Select a .var package",
-            Filter = "Virt-a-Mate Packages (*.var)|*.var|All files (*.*)|*.*"
+            Title = "Select a .var package or a scene .json",
+            Filter = "Packages and scenes (*.var;*.json)|*.var;*.json|Virt-a-Mate Packages (*.var)|*.var|Scenes (*.json)|*.json|All files (*.*)|*.*"
         };
 
         if (dialog.ShowDialog() == true)
@@ -210,6 +210,14 @@ public partial class MainWindow : Window
         DownloadAllMissingButton.IsEnabled = false;
         LogParts(("Scanning ", SubduedBrush), ($"'{Path.GetFileName(FilePathBox.Text)}'", PathBrush), ("...", SubduedBrush));
 
+        var looseScene = LooseSceneUpdater.IsLooseScene(FilePathBox.Text);
+        ApplySourceKind(looseScene);
+        if (looseScene)
+        {
+            await ScanLooseSceneAsync();
+            return;
+        }
+
         try
         {
             var metaTask = _metaReader.ReadAsync(FilePathBox.Text);
@@ -275,11 +283,55 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// A loose scene has no meta.json, no bundled resources and no version to bump: only its plugin references
+    /// can change, rewritten in place.
+    /// </summary>
+    private async Task ScanLooseSceneAsync()
+    {
+        try
+        {
+            foreach (var g in await _scanner.ScanAsync(FilePathBox.Text))
+                _plugins.Add(g);
+
+            LogPluginScanResults();
+
+            var hasPlugins = _plugins.Count > 0;
+            UpdateButton.IsEnabled = hasPlugins;
+            SetAllLatestButton.IsEnabled = hasPlugins;
+            ClearAllButton.IsEnabled = hasPlugins;
+            RescanButton.IsEnabled = true;
+            UpdateTabCounts();
+            UpdateSectionTabLabels();
+        }
+        catch (Exception ex)
+        {
+            Log($"Scan failed: {ex.Message}", ErrorBrush);
+            UpdateButton.IsEnabled = false;
+            RescanButton.IsEnabled = true;
+        }
+    }
+
+    private void ApplySourceKind(bool looseScene)
+    {
+        if (looseScene)
+        {
+            MetaPanel.Visibility = Visibility.Collapsed;
+            SwitchSection("Plugins");
+        }
+        SectionTabVoxta.IsEnabled = !looseScene;
+        SectionTabHubDeps.IsEnabled = !looseScene;
+        LicenseCombo.IsEnabled = !looseScene;
+        OutputModeIncrement.IsEnabled = !looseScene;
+        OutputModeReplace.IsEnabled = !looseScene;
+        UpdateButton.Content = looseScene ? "Update Scene" : "Update Package";
+    }
+
     private void LogPluginScanResults()
     {
         if (_plugins.Count == 0)
         {
-            Log("No plugin references found in the package.", SubduedBrush);
+            Log("No plugin references found.", SubduedBrush);
             return;
         }
 
@@ -323,7 +375,7 @@ public partial class MainWindow : Window
         }
 
         Log("");
-        Log("Edit the New Version column to queue updates, then click Update Package.", SubduedBrush);
+        Log($"Edit the New Version column to queue updates, then click {UpdateButton.Content}.", SubduedBrush);
     }
 
     private void LogVoxtaScanResults()
@@ -1137,11 +1189,11 @@ public partial class MainWindow : Window
             OnCollision = PromptCollision
         };
 
-        var updater = new PackageUpdater(s => Log(s));
-
         try
         {
-            var result = await updater.RunAsync(options);
+            var result = LooseSceneUpdater.IsLooseScene(FilePathBox.Text)
+                ? await new LooseSceneUpdater(s => Log(s)).RunAsync(FilePathBox.Text, updates, options.DryRun)
+                : await new PackageUpdater(s => Log(s)).RunAsync(options);
             if (!result.Success)
                 Log($"Error: {result.Error}", ErrorBrush);
         }
