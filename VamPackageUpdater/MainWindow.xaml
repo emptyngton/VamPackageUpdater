@@ -525,12 +525,9 @@
                 </Grid.RowDefinitions>
 
                 <StackPanel Grid.Row="0" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,6,0,2">
-                    <Button Content="Set all to minimum" Click="SetAllMinButton_Click"
+                    <Button Content="Set all to this version or newer" Click="SetAllMinButton_Click"
                             IsEnabled="False" x:Name="SetAllMinButton" Margin="0,0,6,0" Padding="8,3"
-                            ToolTip="minN = this version or newer, N being the version installed here. VaM offers the download when a user has an older one."/>
-                    <Button Content="Set all to latest" Click="SetAllLatestButton_Click"
-                            IsEnabled="False" x:Name="SetAllLatestButton" Margin="0,0,6,0" Padding="8,3"
-                            ToolTip="latest = any version. VaM is satisfied by whatever version a user already has, however old."/>
+                            ToolTip="Each reference becomes &quot;this version or newer&quot;, this version being the one installed here. Players with an older one are asked to download the newest from the Hub."/>
                     <Button Content="Clear all" Click="ClearAllButton_Click"
                             IsEnabled="False" x:Name="ClearAllButton" Padding="8,3"/>
                 </StackPanel>
@@ -597,7 +594,6 @@
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*"/>
                                             <ColumnDefinition Width="Auto"/>
-                                            <ColumnDefinition Width="Auto"/>
                                         </Grid.ColumnDefinitions>
                                         <TextBox Grid.Column="0"
                                                  Text="{Binding NewVersion, UpdateSourceTrigger=PropertyChanged, Mode=TwoWay}"
@@ -611,18 +607,12 @@
                                                  FontFamily="Cascadia Mono, Consolas"
                                                  GotFocus="VersionTextBox_GotFocus"
                                                  PreviewMouseLeftButtonDown="VersionTextBox_PreviewMouseLeftButtonDown"/>
-                                        <Button Grid.Column="1" Content="min"
+                                        <Button Grid.Column="1" Content="or newer"
                                                 Click="SetRowMinButton_Click"
                                                 Tag="{Binding}"
                                                 Margin="4,0,0,0" Padding="6,2"
                                                 FontSize="11"
-                                                ToolTip="This version or newer (the one installed here)"/>
-                                        <Button Grid.Column="2" Content="latest"
-                                                Click="SetRowLatestButton_Click"
-                                                Tag="{Binding}"
-                                                Margin="4,0,0,0" Padding="6,2"
-                                                FontSize="11"
-                                                ToolTip="Any version"/>
+                                                ToolTip="The version installed here, or any newer one"/>
                                     </Grid>
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>

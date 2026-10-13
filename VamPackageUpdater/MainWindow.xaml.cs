@@ -83,12 +83,6 @@ public partial class MainWindow : Window
 
     private async void RescanButton_Click(object sender, RoutedEventArgs e) => await ScanAsync();
 
-    private void SetRowLatestButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is Button btn && btn.Tag is PluginReferenceGroup g)
-            g.NewVersion = "latest";
-    }
-
     private void SetRowMinButton_Click(object sender, RoutedEventArgs e)
     {
         if (sender is Button btn && btn.Tag is PluginReferenceGroup g)
@@ -115,7 +109,7 @@ public partial class MainWindow : Window
     {
         var unknown = VisiblePlugins().Where(p => !SetMinimumVersion(p)).Select(p => p.PluginId).ToList();
         if (unknown.Count > 0)
-            Log($"No installed or referenced version to use as the minimum for: {string.Join(", ", unknown)}. Set those by hand or to latest.", ErrorBrush);
+            Log($"No installed or referenced version to use as the minimum for: {string.Join(", ", unknown)}. Type a version for those by hand.", ErrorBrush);
     }
 
     private void RefsHyperlink_Click(object sender, RoutedEventArgs e)
@@ -126,12 +120,6 @@ public partial class MainWindow : Window
 
         var dlg = new ReferenceOccurrencesDialog(group) { Owner = this };
         dlg.ShowDialog();
-    }
-
-    private void SetAllLatestButton_Click(object sender, RoutedEventArgs e)
-    {
-        foreach (var p in VisiblePlugins())
-            p.NewVersion = "latest";
     }
 
     private void ClearAllButton_Click(object sender, RoutedEventArgs e)
@@ -235,7 +223,6 @@ public partial class MainWindow : Window
         _addonIndex = null;
         RescanButton.IsEnabled = false;
         UpdateButton.IsEnabled = false;
-        SetAllLatestButton.IsEnabled = false;
         SetAllMinButton.IsEnabled = false;
         ClearAllButton.IsEnabled = false;
         ClearAllAttachmentsButton.IsEnabled = false;
@@ -293,7 +280,6 @@ public partial class MainWindow : Window
                 d.Status == HubDependencyStatus.UpdateAvailable);
 
             UpdateButton.IsEnabled = hasPlugins || hasVoxta;
-            SetAllLatestButton.IsEnabled = hasPlugins;
             SetAllMinButton.IsEnabled = hasPlugins;
             ClearAllButton.IsEnabled = hasPlugins;
             ClearAllAttachmentsButton.IsEnabled = hasVoxta;
@@ -336,7 +322,6 @@ public partial class MainWindow : Window
 
             var hasPlugins = _plugins.Count > 0;
             UpdateButton.IsEnabled = hasPlugins;
-            SetAllLatestButton.IsEnabled = hasPlugins;
             SetAllMinButton.IsEnabled = hasPlugins;
             ClearAllButton.IsEnabled = hasPlugins;
             RescanButton.IsEnabled = true;
@@ -1205,7 +1190,6 @@ public partial class MainWindow : Window
 
         UpdateButton.IsEnabled = false;
         RescanButton.IsEnabled = false;
-        SetAllLatestButton.IsEnabled = false;
         SetAllMinButton.IsEnabled = false;
         ClearAllButton.IsEnabled = false;
         LogClear();
@@ -1250,7 +1234,6 @@ public partial class MainWindow : Window
             var hasPlugins = _plugins.Count > 0;
             var hasVoxta = _voxtaResources.Count > 0;
             UpdateButton.IsEnabled = hasPlugins || hasVoxta;
-            SetAllLatestButton.IsEnabled = hasPlugins;
             SetAllMinButton.IsEnabled = hasPlugins;
             ClearAllButton.IsEnabled = hasPlugins;
             ClearAllAttachmentsButton.IsEnabled = hasVoxta;
