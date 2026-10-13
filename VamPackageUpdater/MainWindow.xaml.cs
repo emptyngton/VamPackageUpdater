@@ -425,11 +425,12 @@ public partial class MainWindow : Window
     {
         // Deps to query:
         //   - anything Missing (classify: Missing-downloadable vs NotOnHub)
-        //   - .latest refs that are Installed (check for newer version on Hub)
+        //   - .latest / .minN refs that are Installed (check for newer version on Hub)
         var toQuery = deps
             .Where(d =>
                 d.Status == HubDependencyStatus.Missing ||
-                (d.Status == HubDependencyStatus.Installed && AddonPackagesIndex.IsLatestRef(d.Name)))
+                (d.Status == HubDependencyStatus.Installed &&
+                 (AddonPackagesIndex.IsLatestRef(d.Name) || AddonPackagesIndex.ParseMinVersion(d.Name) is not null)))
             .ToList();
 
         if (toQuery.Count == 0) return;
@@ -438,7 +439,7 @@ public partial class MainWindow : Window
         try
         {
             using var hub = new HubClient();
-            lookup = await hub.FindPackagesAsync(toQuery.Select(d => d.Name));
+            lookup = await hub.FindPackagesAsync(toQuery.Select(d => AddonPackagesIndex.HubQueryName(d.Name)).Distinct());
         }
         catch (Exception ex)
         {
@@ -449,9 +450,10 @@ public partial class MainWindow : Window
         foreach (var dep in toQuery)
         {
             // Record what the scene asks for, so the UI can show both sides on mismatch.
-            dep.RequestedVersion = AddonPackagesIndex.ParseRequestedVersion(dep.Name);
+            var minVersion = AddonPackagesIndex.ParseMinVersion(dep.Name);
+            dep.RequestedVersion = AddonPackagesIndex.ParseRequestedVersion(dep.Name) ?? minVersion;
 
-            if (!lookup.TryGetValue(dep.Name, out var info) || !info.HasUsableDownloadUrl)
+            if (!lookup.TryGetValue(AddonPackagesIndex.HubQueryName(dep.Name), out var info) || !info.HasUsableDownloadUrl)
             {
                 // Hub won't serve this. Only mark NotOnHub if not locally installed —
                 // an installed package we can't verify on Hub is still fine to use.
@@ -470,17 +472,18 @@ public partial class MainWindow : Window
             // Exact-version ref that Hub substitutes with a different version (e.g. scene
             // wants SPQR.Footsteps.3 but Hub only has .2). Silently downloading .2 wouldn't
             // satisfy VaM's .3 ref — flag it so the user can resolve manually instead.
+            // A .minN ref is only unsatisfiable when Hub's newest is still below N.
             if (dep.Status == HubDependencyStatus.Missing &&
                 dep.RequestedVersion is int requestedV &&
                 hubVersion is int hubSubV &&
-                hubSubV != requestedV)
+                (minVersion is null ? hubSubV != requestedV : hubSubV < requestedV))
             {
                 dep.Status = HubDependencyStatus.VersionMismatch;
                 continue;
             }
 
             if (dep.Status == HubDependencyStatus.Installed &&
-                AddonPackagesIndex.IsLatestRef(dep.Name) &&
+                (AddonPackagesIndex.IsLatestRef(dep.Name) || minVersion is not null) &&
                 dep.InstalledVersion is int installedV &&
                 hubVersion is int hubV &&
                 hubV > installedV)
@@ -536,7 +539,7 @@ public partial class MainWindow : Window
                     (" — Hub only has v", SubduedBrush),
                     (d.HubLatestVersion?.ToString() ?? "?", NumberBrush));
             }
-            Log("Scene asks for specific versions that Hub doesn't serve. Either grab the exact version from the creator's Patreon, or use the Plugin references tab to rewrite those refs to .latest.", SubduedBrush);
+            Log("Scene asks for versions that Hub doesn't serve. Either grab them from the creator's Patreon, or use the Plugin references tab to set a minimum version Hub has.", SubduedBrush);
         }
     }
 
@@ -759,12 +762,13 @@ public partial class MainWindow : Window
 
             var requested = dep.RequestedVersion?.ToString() ?? "?";
             var hubHas = dep.HubLatestVersion?.ToString() ?? "?";
+            var asks = dep.IsMinimumRef ? $"v{requested} or newer" : $"v{requested} exactly";
             var confirm = MessageBox.Show(
                 this,
-                $"Scene asks for {dep.PackageBaseName} v{requested} exactly, but Hub only serves v{hubHas}.\n\n" +
+                $"Scene asks for {dep.PackageBaseName} {asks}, but Hub only serves v{hubHas}.\n\n" +
                 $"Install v{hubHas} anyway?\n\n" +
-                $"Note: this won't satisfy the scene's v{requested} reference — VaM will still complain about the missing exact version. " +
-                $"To actually fix the scene, either grab v{requested} manually from the creator's Patreon, or rewrite the ref to .latest on the Plugin references tab.",
+                $"Note: this won't satisfy the scene's v{requested} reference — VaM will still report it as missing. " +
+                $"To actually fix the scene, either grab v{requested} manually from the creator's Patreon, or set a minimum version Hub has on the Plugin references tab.",
                 "Install anyway?",
                 MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
             if (confirm != MessageBoxResult.Yes) return;
@@ -885,7 +889,7 @@ public partial class MainWindow : Window
                     ("     ", DefaultBrush),
                     ("(scene still references v", SubduedBrush),
                     (dep.RequestedVersion?.ToString() ?? "?", NumberBrush),
-                    (" — update the ref to .latest or grab v", SubduedBrush),
+                    (" — set a minimum version Hub has, or grab v", SubduedBrush),
                     (dep.RequestedVersion?.ToString() ?? "?", NumberBrush),
                     (" manually to fully resolve)", SubduedBrush));
             }

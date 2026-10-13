@@ -112,9 +112,11 @@ public sealed class HubDependency : INotifyPropertyChanged
     public string? StatusTooltip => Status switch
     {
         HubDependencyStatus.UpdateAvailable when InstalledVersion.HasValue && HubLatestVersion.HasValue =>
-            $"Installed: v{InstalledVersion} · Hub latest: v{HubLatestVersion}. Scene's .latest ref still resolves via the installed version, but Hub has a newer one.",
+            $"Installed: v{InstalledVersion} · Hub latest: v{HubLatestVersion}. The scene's ref is still satisfied by the installed version, but Hub has a newer one.",
+        HubDependencyStatus.VersionMismatch when IsMinimumRef && RequestedVersion.HasValue && HubLatestVersion.HasValue =>
+            $"Scene needs v{RequestedVersion} or newer, but Hub only serves v{HubLatestVersion}. Publish v{RequestedVersion} first, or lower the minimum in the Plugin references tab.",
         HubDependencyStatus.VersionMismatch when RequestedVersion.HasValue && HubLatestVersion.HasValue =>
-            $"Scene asks for v{RequestedVersion} exactly, but Hub only serves v{HubLatestVersion}. Auto-downloading won't satisfy this reference — grab v{RequestedVersion} from the creator's Patreon, or change the ref to .latest in the Plugin references tab.",
+            $"Scene asks for v{RequestedVersion} exactly, but Hub only serves v{HubLatestVersion}. Auto-downloading won't satisfy this reference — grab v{RequestedVersion} from the creator's Patreon, or change the ref to a minimum version in the Plugin references tab.",
         HubDependencyStatus.NotOnHub =>
             "Hub has no download URL for this package — it's paid-only, has been removed, or was never uploaded to Hub. Grab it manually from the creator's Patreon/etc.",
         HubDependencyStatus.Error => ErrorMessage,
@@ -126,8 +128,11 @@ public sealed class HubDependency : INotifyPropertyChanged
     /// <summary>"Author.Package" portion of the ref, without the version suffix.</summary>
     public string PackageBaseName => Services.AddonPackagesIndex.SplitNameParts(Name).PackageBase;
 
-    /// <summary>"latest" / "3" / "min.5" — the version the scene is requesting.</summary>
+    /// <summary>"latest" / "3" / "min5" — the version the scene is requesting.</summary>
     public string RequestedVersionLabel => Services.AddonPackagesIndex.SplitNameParts(Name).VersionLabel;
+
+    /// <summary>True for "Author.Package.minN" refs: any version from N up satisfies them.</summary>
+    public bool IsMinimumRef => Services.AddonPackagesIndex.ParseMinVersion(Name) is not null;
 
     /// <summary>Version number Hub serves for this package, as a display string. "—" when unknown.</summary>
     public string HubLatestVersionLabel => HubLatestVersion?.ToString() ?? "—";

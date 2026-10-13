@@ -4,7 +4,7 @@ using VamPackageUpdater.Models;
 namespace VamPackageUpdater.Services;
 
 /// <summary>
-/// Rewrites "Author.Package.N" / "Author.Package.latest" references to the queued versions. Shared by the
+/// Rewrites "Author.Package.N" / ".latest" / ".minN" references to the queued versions. Shared by the
 /// .var updater and the loose scene updater so both apply exactly the same rule.
 /// </summary>
 public sealed class PluginReferenceRewriter
@@ -17,7 +17,7 @@ public sealed class PluginReferenceRewriter
             .Where(u => !string.IsNullOrWhiteSpace(u.NewVersion))
             .Select(u => (
                 u,
-                new Regex($@"{Regex.Escape(u.PluginId)}\.(?:\d+|latest)\b", RegexOptions.IgnoreCase),
+                new Regex($@"{Regex.Escape(u.PluginId)}\.(?:\d+|latest|min\d+)\b", RegexOptions.IgnoreCase),
                 $"{u.PluginId}.{u.NewVersion.Trim()}"))
             .ToList();
     }

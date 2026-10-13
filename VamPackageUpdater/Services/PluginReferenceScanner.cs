@@ -8,7 +8,7 @@ namespace VamPackageUpdater.Services;
 public sealed class PluginReferenceScanner
 {
     private static readonly Regex PluginRefPattern = new(
-        @"\b(?<id>[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*)\.(?<version>\d+|latest)\b",
+        @"\b(?<id>[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*)\.(?<version>\d+|latest|min\d+)\b",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     private static readonly HashSet<string> ScannableExtensions =
