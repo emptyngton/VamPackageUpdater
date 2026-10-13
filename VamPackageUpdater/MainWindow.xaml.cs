@@ -39,6 +39,7 @@ public partial class MainWindow : Window
     private Paragraph _logParagraph = null!;
     private PluginCategory? _activeFilter;
     private ICollectionView _pluginsView = null!;
+    private AddonPackagesIndex? _addonIndex;
 
     public MainWindow()
     {
@@ -86,6 +87,35 @@ public partial class MainWindow : Window
     {
         if (sender is Button btn && btn.Tag is PluginReferenceGroup g)
             g.NewVersion = "latest";
+    }
+
+    private void SetRowMinButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button btn && btn.Tag is PluginReferenceGroup g)
+            SetMinimumVersion(g);
+    }
+
+    /// <summary>
+    /// "minN" with N = the newest version installed in AddonPackages (the one the scene was tested with), or the
+    /// newest version the scene already references when none is installed. Returns false when neither is known.
+    /// </summary>
+    private bool SetMinimumVersion(PluginReferenceGroup g)
+    {
+        var version = _addonIndex?.HighestInstalledVersion(g.PluginId) ??
+            g.CurrentVersions
+                .Select(v => v.StartsWith("min", StringComparison.OrdinalIgnoreCase) ? v[3..] : v)
+                .Select(v => int.TryParse(v, out var n) ? n : (int?)null)
+                .Max();
+        if (version is not int n) return false;
+        g.NewVersion = $"min{n}";
+        return true;
+    }
+
+    private void SetAllMinButton_Click(object sender, RoutedEventArgs e)
+    {
+        var unknown = VisiblePlugins().Where(p => !SetMinimumVersion(p)).Select(p => p.PluginId).ToList();
+        if (unknown.Count > 0)
+            Log($"No installed or referenced version to use as the minimum for: {string.Join(", ", unknown)}. Set those by hand or to latest.", ErrorBrush);
     }
 
     private void RefsHyperlink_Click(object sender, RoutedEventArgs e)
@@ -202,9 +232,11 @@ public partial class MainWindow : Window
         _plugins.Clear();
         _voxtaResources.Clear();
         _hubDeps.Clear();
+        _addonIndex = null;
         RescanButton.IsEnabled = false;
         UpdateButton.IsEnabled = false;
         SetAllLatestButton.IsEnabled = false;
+        SetAllMinButton.IsEnabled = false;
         ClearAllButton.IsEnabled = false;
         ClearAllAttachmentsButton.IsEnabled = false;
         DownloadAllMissingButton.IsEnabled = false;
@@ -238,8 +270,8 @@ public partial class MainWindow : Window
             var addonPackagesFolder = AddonPackagesIndex.InferAddonPackagesFolder(FilePathBox.Text);
             if (!string.IsNullOrEmpty(addonPackagesFolder))
             {
-                var index = await Task.Run(() => new AddonPackagesIndex(addonPackagesFolder));
-                index.AnnotateStatus(depResults);
+                _addonIndex = await Task.Run(() => new AddonPackagesIndex(addonPackagesFolder));
+                _addonIndex.AnnotateStatus(depResults);
             }
 
             // Ask the Hub upfront about availability for each dep:
@@ -262,6 +294,7 @@ public partial class MainWindow : Window
 
             UpdateButton.IsEnabled = hasPlugins || hasVoxta;
             SetAllLatestButton.IsEnabled = hasPlugins;
+            SetAllMinButton.IsEnabled = hasPlugins;
             ClearAllButton.IsEnabled = hasPlugins;
             ClearAllAttachmentsButton.IsEnabled = hasVoxta;
             DownloadAllMissingButton.IsEnabled = hasActionableDeps;
@@ -294,11 +327,17 @@ public partial class MainWindow : Window
             foreach (var g in await _scanner.ScanAsync(FilePathBox.Text))
                 _plugins.Add(g);
 
+            // Only used to fill in minimum versions: a loose scene has no dependency list to check.
+            var addonPackagesFolder = AddonPackagesIndex.InferAddonPackagesFolder(FilePathBox.Text);
+            if (!string.IsNullOrEmpty(addonPackagesFolder))
+                _addonIndex = await Task.Run(() => new AddonPackagesIndex(addonPackagesFolder));
+
             LogPluginScanResults();
 
             var hasPlugins = _plugins.Count > 0;
             UpdateButton.IsEnabled = hasPlugins;
             SetAllLatestButton.IsEnabled = hasPlugins;
+            SetAllMinButton.IsEnabled = hasPlugins;
             ClearAllButton.IsEnabled = hasPlugins;
             RescanButton.IsEnabled = true;
             UpdateTabCounts();
@@ -1167,6 +1206,7 @@ public partial class MainWindow : Window
         UpdateButton.IsEnabled = false;
         RescanButton.IsEnabled = false;
         SetAllLatestButton.IsEnabled = false;
+        SetAllMinButton.IsEnabled = false;
         ClearAllButton.IsEnabled = false;
         LogClear();
 
@@ -1211,6 +1251,7 @@ public partial class MainWindow : Window
             var hasVoxta = _voxtaResources.Count > 0;
             UpdateButton.IsEnabled = hasPlugins || hasVoxta;
             SetAllLatestButton.IsEnabled = hasPlugins;
+            SetAllMinButton.IsEnabled = hasPlugins;
             ClearAllButton.IsEnabled = hasPlugins;
             ClearAllAttachmentsButton.IsEnabled = hasVoxta;
             RescanButton.IsEnabled = true;
